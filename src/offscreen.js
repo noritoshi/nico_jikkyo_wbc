@@ -343,75 +343,42 @@ async function fetchSegment(uri) {
 function extractAndEmitComments(msgBuf) {
   const fields = decodeProtobuf(msgBuf);
 
-  // Recursively look for comment text in all nested messages
-  findComments(fields, 0);
-}
+  // セグメント内の各フレームメッセージは以下の構造:
+  // f1: コメントテキスト (bytes/string)
+  // f2: (bytes, 空文字列が多い)
+  // f3: vpos (varint)
+  // f4: score/flag (varint, optional)
+  // f6: ユーザーID (bytes/string, "a:xxxx")
+  // f7: (bytes)
+  // f8: コメント番号 (varint)
+  //
+  // ただしメッセージは1段ネストされている場合がある
 
-// Known niconico comment structure in protobuf:
-// A comment message typically has a string field containing the comment text
-// and numeric fields for metadata (vpos, date, etc.)
-function findComments(fields, depth) {
-  if (depth > 6) return;
+  // 直接f1がある場合（フラットな構造）
+  if (fields[1] && fields[3]) {
+    const f1 = fields[1][0];
+    const f3 = fields[3][0];
+    if (f1?.type === 'bytes' && f3?.type === 'varint') {
+      const text = bytesToString(f1.data);
+      emitComment(text);
+      return;
+    }
+  }
 
-  // Check all bytes fields
+  // ネストされている場合: bytes フィールドの中にコメント構造がある
   for (const [fn, values] of Object.entries(fields)) {
     for (const v of values) {
       if (v.type === 'bytes') {
         try {
           const nested = decodeProtobuf(v.data);
-          if (Object.keys(nested).length > 0) {
-            // Check if this message looks like a comment:
-            // Has at least one string field (text) and at least one varint field (metadata)
-            const hasString = Object.values(nested).some(vals =>
-              vals.some(val => {
-                if (val.type !== 'bytes') return false;
-                const s = bytesToString(val.data);
-                // Must be displayable text, not a URL or binary
-                return s.length >= 1 && s.length < 200
-                  && !s.startsWith('https://')
-                  && /[\u3000-\u9fff\uff00-\uffefA-Za-z0-9]/.test(s);
-              })
-            );
-            const hasVarint = Object.values(nested).some(vals =>
-              vals.some(val => val.type === 'varint')
-            );
-
-            if (hasString && hasVarint) {
-              // Dump full structure for analysis
-              const info = {};
-              for (const [nfn, nvals] of Object.entries(nested)) {
-                for (const nv of nvals) {
-                  if (nv.type === 'varint') {
-                    info['f' + nfn] = nv.value;
-                  } else if (nv.type === 'bytes') {
-                    const s = bytesToString(nv.data);
-                    info['f' + nfn] = s.length < 100 ? s : s.substring(0, 50) + '...';
-                  }
-                }
-              }
-              log('[comment-fields]', JSON.stringify(info));
-
-              // Extract the likely comment text (longest readable string)
-              let bestText = '';
-              for (const vals of Object.values(nested)) {
-                for (const val of vals) {
-                  if (val.type === 'bytes') {
-                    const s = bytesToString(val.data);
-                    if (s.length > bestText.length && s.length < 200
-                      && !s.startsWith('https://')
-                      && /[\u3000-\u9fff\uff00-\uffefA-Za-z0-9]/.test(s)) {
-                      bestText = s;
-                    }
-                  }
-                }
-              }
-              if (bestText) {
-                emitComment(bestText);
-              }
+          // f1 (text) + f3 (vpos as varint) があればコメント
+          if (nested[1] && nested[3]) {
+            const nf1 = nested[1][0];
+            const nf3 = nested[3][0];
+            if (nf1?.type === 'bytes' && nf3?.type === 'varint') {
+              const text = bytesToString(nf1.data);
+              emitComment(text);
             }
-
-            // Recurse
-            findComments(nested, depth + 1);
           }
         } catch (e) {}
       }
