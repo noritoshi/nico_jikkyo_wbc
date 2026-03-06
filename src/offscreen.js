@@ -316,9 +316,15 @@ function findAndFetchSegments(fields, depth) {
         const str = bytesToString(v.data);
         // Check if this is a segment URI
         if (str.startsWith('https://') && !fetchedSegments.has(str)) {
-          log('[mpn] Found URI in f' + fn + ':', str.substring(0, 120));
-          fetchedSegments.add(str);
-          fetchSegment(str);
+          // backward segments contain old comments, skip them
+          if (str.includes('/backward/')) {
+            log('[mpn] Skipping backward URI');
+            fetchedSegments.add(str);
+          } else {
+            log('[mpn] Found URI in f' + fn + ':', str.substring(0, 120));
+            fetchedSegments.add(str);
+            fetchSegment(str);
+          }
         }
         // Recurse into nested messages
         try {
@@ -425,8 +431,23 @@ function findComments(fields, depth) {
   }
 }
 
+function isLikelyComment(text) {
+  if (!text || text.length === 0) return false;
+  // Filter out user IDs (a:xxxxx format)
+  if (/^a:[A-Za-z0-9_-]+$/.test(text)) return false;
+  // Filter out thread IDs (lv123456-N format)
+  if (/^lv\d+-\d+$/.test(text)) return false;
+  // Filter out pure numeric strings
+  if (/^\d+$/.test(text)) return false;
+  // Filter out URLs
+  if (text.startsWith('https://') || text.startsWith('http://')) return false;
+  // Must have some readable content
+  if (text.length < 1 || text.length > 200) return false;
+  return true;
+}
+
 function emitComment(text) {
-  if (!text || text.length === 0) return;
+  if (!isLikelyComment(text)) return;
   log('[comment]', text.substring(0, 50));
   chrome.runtime.sendMessage({
     type: 'comment',
