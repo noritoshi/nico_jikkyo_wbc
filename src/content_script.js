@@ -5,14 +5,9 @@ const LANE_COUNT = 12;
 const COMMENT_DURATION = 7000; // ms
 const lanes = new Array(LANE_COUNT).fill(0); // 各レーンの解放時刻
 
-// コメント表示: vposベースのdelayに従ってタイミング通りに表示
+// コメント表示: ストリーミングで届いたコメントを即座に表示
 function enqueueComment(commentData) {
-  const delay = commentData.delay || 0;
-  if (delay <= 0) {
-    renderComment(commentData);
-  } else {
-    setTimeout(() => renderComment(commentData), delay);
-  }
+  renderComment(commentData);
 }
 
 function getOverlay() {

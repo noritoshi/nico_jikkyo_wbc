@@ -105,8 +105,8 @@ function readFramedMessages(buf) {
   return messages;
 }
 
-function dumpFields(fields, prefix = '', depth = 0) {
-  if (depth > 4) return;
+function dumpFields(fields, prefix = '', depth = 0, maxDepth = 4) {
+  if (depth > maxDepth) return;
   for (const [fn, values] of Object.entries(fields)) {
     for (const v of values) {
       if (v.type === 'varint') {
@@ -122,7 +122,7 @@ function dumpFields(fields, prefix = '', depth = 0) {
           try {
             const nested = decodeProtobuf(v.data);
             if (Object.keys(nested).length > 0) {
-              dumpFields(nested, prefix + '  ', depth + 1);
+              dumpFields(nested, prefix + '  ', depth + 1, maxDepth);
             }
           } catch (e) {}
         }
@@ -170,8 +170,9 @@ async function startConnection({ wsUrl, broadcastId }) {
       watchWs.send(JSON.stringify({ type: 'keepSeat' }));
       return;
     }
+    // 全メッセージタイプをログ出力（デバッグ用）
+    log('[ws] msg type=' + msg.type, JSON.stringify(msg.data).substring(0, 300));
     if (msg.type === 'messageServer') {
-      log('[ws] messageServer:', JSON.stringify(msg.data));
       startCommentStream(msg.data.viewUri);
     }
   };
@@ -198,6 +199,8 @@ async function startCommentStream(viewUri) {
   while (!signal.aborted) {
     try {
       const url = viewUri + '?at=' + nextAt;
+      log('[mpn] Poll:', url.substring(url.indexOf('?')));
+      const pollStart = Date.now();
       const res = await fetch(url, { signal });
 
       if (!res.ok) {
@@ -207,41 +210,81 @@ async function startCommentStream(viewUri) {
       }
 
       // ストリーミングで逐次読み取り — フレームが届いた瞬間に処理
+      // nextAtを取得したら現在のストリームを読みつつ次のポーリングも開始
       const reader = res.body.getReader();
       let buffer = new Uint8Array(0);
       let gotNext = false;
+      let nextPollStarted = false;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      const continueReading = async () => {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-        // 既存バッファと結合
-        const newBuf = new Uint8Array(buffer.length + value.length);
-        newBuf.set(buffer);
-        newBuf.set(value, buffer.length);
-        buffer = newBuf;
+          const newBuf = new Uint8Array(buffer.length + value.length);
+          newBuf.set(buffer);
+          newBuf.set(value, buffer.length);
+          buffer = newBuf;
 
-        // 完全なフレームを逐次処理
-        const { messages, remaining } = readFramedMessagesWithRemainder(buffer);
-        buffer = remaining;
+          const { messages, remaining } = readFramedMessagesWithRemainder(buffer);
+          buffer = remaining;
 
-        for (const msgBuf of messages) {
-          const result = processChunkedMessage(msgBuf);
-          if (result.nextAt) {
-            nextAt = result.nextAt;
-            gotNext = true;
-          }
-          // セグメントURIを即座にfetch
-          if (result.segmentUris) {
-            for (const uri of result.segmentUris) {
-              if (!fetchedSegments.has(uri)) {
-                fetchedSegments.add(uri);
-                log('[mpn] Fetch segment:', uri.substring(0, 80));
-                fetchSegment(uri);
+          for (const msgBuf of messages) {
+            const result = processChunkedMessage(msgBuf);
+            if (result.nextAt) {
+              nextAt = result.nextAt;
+              gotNext = true;
+              log('[mpn] Next at:', result.nextAt, 'poll took:', (Date.now() - pollStart) + 'ms');
+            }
+            if (result.segmentUris) {
+              for (const uri of result.segmentUris) {
+                if (!fetchedSegments.has(uri)) {
+                  fetchedSegments.add(uri);
+                  log('[mpn] Fetch segment:', uri.substring(0, 80));
+                  fetchSegment(uri);
+                }
               }
             }
           }
+
+          // nextAtを取得したら残りのストリームは裏で読みつつ、ループを抜ける
+          if (gotNext && !nextPollStarted) {
+            nextPollStarted = true;
+            return; // 次のポーリングを即座に開始するためにreturn
+          }
         }
+      };
+
+      await continueReading();
+
+      // ストリームの残りをバックグラウンドで読み続ける（セグメントURI取得用）
+      if (nextPollStarted) {
+        (async () => {
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              const newBuf = new Uint8Array(buffer.length + value.length);
+              newBuf.set(buffer);
+              newBuf.set(value, buffer.length);
+              buffer = newBuf;
+              const { messages, remaining } = readFramedMessagesWithRemainder(buffer);
+              buffer = remaining;
+              for (const msgBuf of messages) {
+                const result = processChunkedMessage(msgBuf);
+                if (result.segmentUris) {
+                  for (const uri of result.segmentUris) {
+                    if (!fetchedSegments.has(uri)) {
+                      fetchedSegments.add(uri);
+                      log('[mpn] Fetch segment (bg):', uri.substring(0, 80));
+                      fetchSegment(uri);
+                    }
+                  }
+                }
+              }
+            }
+          } catch (e) {}
+        })();
       }
 
       if (!gotNext) {
@@ -278,7 +321,7 @@ function readFramedMessagesWithRemainder(buf) {
 function processChunkedMessage(msgBuf) {
   const fields = decodeProtobuf(msgBuf);
   log('[mpn] ChunkedMessage fields:', Object.keys(fields).join(','));
-  dumpFields(fields, '  ');
+  dumpFields(fields, '  ', 0, 6);
 
   const result = { nextAt: null };
 
@@ -340,38 +383,41 @@ async function fetchSegment(uri) {
   try {
     const signal = commentAbort?.signal;
     const res = await fetch(uri, { signal });
-    const buf = new Uint8Array(await res.arrayBuffer());
-    log('[seg] Fetched segment:', buf.length, 'bytes from', uri.substring(0, 80));
+    log('[seg] Streaming segment from', uri.substring(0, 80));
 
-    if (buf.length < 10) {
-      log('[seg] Segment too small, skipping');
-      return;
+    // セグメントをストリーミングで読み取り、フレームが完成次第コメントを即座に送出
+    const reader = res.body.getReader();
+    let buffer = new Uint8Array(0);
+    let commentCount = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      // バッファに追加
+      const newBuf = new Uint8Array(buffer.length + value.length);
+      newBuf.set(buffer);
+      newBuf.set(value, buffer.length);
+      buffer = newBuf;
+
+      // 完全なフレームを逐次処理
+      const { messages, remaining } = readFramedMessagesWithRemainder(buffer);
+      buffer = remaining;
+
+      for (const frame of messages) {
+        const c = extractComment(frame);
+        if (c) {
+          emitComment(c.text, 0);
+          commentCount++;
+        }
+      }
     }
 
-    // セグメント全体からコメントを収集
-    const comments = [];
-    const framed = readFramedMessages(buf);
-    const frames = framed.length > 0 ? framed : [buf];
-    log('[seg] Framed messages:', frames.length);
-
-    for (const frame of frames) {
-      const c = extractComment(frame);
-      if (c) comments.push(c);
-    }
-
-    if (comments.length === 0) return;
-
-    // vposでソートして、差分をdelayとして設定
-    comments.sort((a, b) => a.vpos - b.vpos);
-    const baseVpos = comments[0].vpos;
-    log('[seg] Comments:', comments.length, 'vpos range:', baseVpos, '-', comments[comments.length - 1].vpos,
-        'span:', ((comments[comments.length - 1].vpos - baseVpos) * 10) + 'ms');
-
-    for (const c of comments) {
-      const delayMs = Math.max(0, (c.vpos - baseVpos) * 10); // vposは1/100秒
-      emitComment(c.text, delayMs);
+    if (commentCount > 0) {
+      log('[seg] Streamed', commentCount, 'comments from', uri.substring(0, 80));
     }
   } catch (err) {
+    if (commentAbort?.signal.aborted) return;
     log('[seg] Fetch error:', err.message);
   }
 }
