@@ -149,6 +149,41 @@ vposの基準時刻（ISO 8601形式）。
 実際の表示時刻 = vposBaseTime + (vpos / 100) 秒
 ```
 
+## 認証
+
+- ニコニコ生放送へのログインは**不要**
+- 未ログイン状態（シークレットモードなど）でもコメント取得可能
+- embedded_dataのWebSocket URL内のaudience_tokenはセッション不要で取得できる
+
+## 特許に関する注意
+
+- ドワンゴが「動画上にコメントを横に流す」表示方式の特許を保有
+  - 特許第4695583号、特許第4734471号（出願日: 2006年12月11日）
+  - **2026年12月11日に失効予定**（出願から20年）
+- 2025年3月3日: 最高裁でドワンゴがFC2に勝訴（海外サーバーでも侵害認定）
+- ニコニコ代表が2022年に「コメントを流すアドオンは見つけ次第潰す」と発言
+- bilibiliなど海外サービスは日本の特許権の範囲外
+- Chrome Web Storeでの公開は特許リスクあり → GitHub公開+手動インストールが安全
+
+## ニコニコの利用規約
+
+- 外部ツール・コメントビューアの利用を明示的に禁止する条項はない
+- スクレイピング・リバースエンジニアリングの明示的禁止もない
+- 禁止事項: サーバー過負荷、運営妨害（一般的）
+- 本拡張のポーリングはサーバー主導のロングポーリング（~30秒間隔）で負荷は最小限
+
+## Chrome拡張の公開に関する知見
+
+- Chrome Web Storeは審査あり（通常1〜3営業日）
+- host_permissionsがあると審査が厳しめ
+- `tabs`権限は`scripting`権限+`host_permissions`で代替可能
+  - content_scriptの動的注入: `chrome.scripting.executeScript()`
+  - backgroundとcontent_script間の通信: `chrome.runtime.connect()`（port方式）
+- `cookies`権限は`host_permissions`があれば不要（fetchのcredentials: includeは動く）
+- content_scriptの二重注入ガード: `window.__nikoJikkyoLoaded` フラグ
+- git履歴のメール書き換え: `git filter-branch --env-filter`
+- プロジェクトローカルのgit設定: `git config user.email` (--globalなし)
+
 ## 参考リソース
 
 - [nicolive-comment-protobuf (公式Protobufスキーマ)](https://github.com/n-air-app/nicolive-comment-protobuf)
