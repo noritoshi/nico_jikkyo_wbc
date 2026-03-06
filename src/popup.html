@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body {
+      width: 320px;
+      padding: 16px;
+      font-family: 'Hiragino Kaku Gothic ProN', sans-serif;
+      font-size: 14px;
+      background: #1a1a2e;
+      color: #eee;
+      margin: 0;
+    }
+    h1 {
+      font-size: 16px;
+      margin: 0 0 12px 0;
+      color: #e94560;
+    }
+    .field {
+      margin-bottom: 12px;
+    }
+    label {
+      display: block;
+      font-size: 12px;
+      color: #aaa;
+      margin-bottom: 4px;
+    }
+    input[type="text"] {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #333;
+      border-radius: 4px;
+      background: #16213e;
+      color: #eee;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+    input[type="text"]::placeholder {
+      color: #666;
+    }
+    .buttons {
+      display: flex;
+      gap: 8px;
+    }
+    button {
+      flex: 1;
+      padding: 8px 12px;
+      border: none;
+      border-radius: 4px;
+      font-size: 14px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    #btn-connect {
+      background: #e94560;
+      color: #fff;
+    }
+    #btn-connect:hover {
+      background: #c73e54;
+    }
+    #btn-connect:disabled {
+      background: #555;
+      cursor: not-allowed;
+    }
+    #btn-disconnect {
+      background: #333;
+      color: #eee;
+    }
+    #btn-disconnect:hover {
+      background: #444;
+    }
+    #btn-disconnect:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .status {
+      margin-top: 12px;
+      padding: 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      text-align: center;
+    }
+    .status.disconnected { background: #333; color: #888; }
+    .status.connecting { background: #2a2a00; color: #ffcc00; }
+    .status.connected { background: #002a00; color: #00ff66; }
+    .status.error { background: #2a0000; color: #ff4444; }
+  </style>
+</head>
+<body>
+  <h1>Niko Jikkyo WBC</h1>
+
+  <div class="field">
+    <label>チャンネルID / 番組ID</label>
+    <input type="text" id="channel-id" placeholder="ch2650071 または lv...">
+  </div>
+
+  <div class="buttons">
+    <button id="btn-connect">接続</button>
+    <button id="btn-disconnect" disabled>切断</button>
+  </div>
+
+  <div id="status" class="status disconnected">未接続</div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
