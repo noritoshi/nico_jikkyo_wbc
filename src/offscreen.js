@@ -192,41 +192,66 @@ async function startCommentStream(viewUri) {
   commentAbort = new AbortController();
   const signal = commentAbort.signal;
 
-  try {
-    // パラメータなしでストリーミング取得を試みる
-    log('[mpn] Fetching viewUri (streaming)...');
-    const res = await fetch(viewUri, { signal });
-    log('[mpn] Status:', res.status, 'Content-Type:', res.headers.get('content-type'));
+  let nextAt = 'now';
 
-    const reader = res.body.getReader();
-    let buffer = new Uint8Array(0);
+  while (!signal.aborted) {
+    try {
+      const url = viewUri + '?at=' + nextAt;
+      log('[mpn] Fetching:', url.substring(0, 120) + '...');
+      const res = await fetch(url, { signal });
 
-    while (!signal.aborted) {
-      const { done, value } = await reader.read();
-      if (done) {
-        log('[mpn] Stream ended');
-        break;
+      if (!res.ok) {
+        log('[mpn] HTTP error:', res.status);
+        await sleep(3000, signal);
+        continue;
       }
 
-      // Append to buffer
-      const newBuf = new Uint8Array(buffer.length + value.length);
-      newBuf.set(buffer);
-      newBuf.set(value, buffer.length);
-      buffer = newBuf;
+      // ストリーミングで読み取り
+      const reader = res.body.getReader();
+      let buffer = new Uint8Array(0);
+      let gotNext = false;
 
-      log('[mpn] Received chunk:', value.length, 'bytes, buffer total:', buffer.length);
+      while (!signal.aborted) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-      // Try to read framed messages from buffer
-      const { messages, remaining } = readFramedMessagesWithRemainder(buffer);
-      buffer = remaining;
+        const newBuf = new Uint8Array(buffer.length + value.length);
+        newBuf.set(buffer);
+        newBuf.set(value, buffer.length);
+        buffer = newBuf;
 
-      for (const msgBuf of messages) {
-        processChunkedMessage(msgBuf);
+        const { messages, remaining } = readFramedMessagesWithRemainder(buffer);
+        buffer = remaining;
+
+        for (const msgBuf of messages) {
+          const result = processChunkedMessage(msgBuf);
+          if (result.nextAt) {
+            nextAt = result.nextAt;
+            gotNext = true;
+          }
+        }
       }
-    }
-  } catch (err) {
-    if (!signal.aborted) {
-      log('[mpn] Stream error:', err.message);
+
+      // Process any remaining buffer
+      if (buffer.length > 0) {
+        const { messages } = readFramedMessagesWithRemainder(buffer);
+        for (const msgBuf of messages) {
+          const result = processChunkedMessage(msgBuf);
+          if (result.nextAt) {
+            nextAt = result.nextAt;
+            gotNext = true;
+          }
+        }
+      }
+
+      if (!gotNext) {
+        // No next pointer found, wait and retry
+        await sleep(1000, signal);
+      }
+    } catch (err) {
+      if (signal.aborted) break;
+      log('[mpn] Error:', err.message);
+      await sleep(3000, signal);
     }
   }
 }
@@ -256,8 +281,29 @@ function processChunkedMessage(msgBuf) {
   log('[mpn] ChunkedMessage fields:', Object.keys(fields).join(','));
   dumpFields(fields, '  ');
 
+  const result = { nextAt: null };
+
+  // field 4 contains "next" with timestamp (field 1 = unix seconds)
+  if (fields[4]) {
+    for (const v of fields[4]) {
+      if (v.type === 'bytes') {
+        const nested = decodeProtobuf(v.data);
+        if (nested[1]) {
+          for (const ts of nested[1]) {
+            if (ts.type === 'varint' && ts.value > 1700000000) {
+              result.nextAt = String(ts.value);
+              log('[mpn] Next at:', result.nextAt);
+            }
+          }
+        }
+      }
+    }
+  }
+
   // Look for segment URIs in all nested bytes fields
   findAndFetchSegments(fields, 0);
+
+  return result;
 }
 
 const fetchedSegments = new Set();
