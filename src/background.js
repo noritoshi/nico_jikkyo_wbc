@@ -36,6 +36,9 @@ async function fetchWatchData(channelId) {
     .replace(/&#39;/g, "'");
 
   const data = JSON.parse(decoded);
+  console.log('[bg] Parsed embedded data keys:', Object.keys(data));
+  console.log('[bg] data.site:', JSON.stringify(data.site, null, 2)?.substring(0, 500));
+  console.log('[bg] data.program:', JSON.stringify(data.program, null, 2)?.substring(0, 500));
 
   // WebSocket URLを探す
   const wsUrl = data.site?.relive?.webSocketUrl
@@ -53,8 +56,13 @@ async function fetchWatchData(channelId) {
 // 接続開始
 async function connect(channelId) {
   try {
+    console.log('[bg] Fetching watch data for:', channelId);
     const watchData = await fetchWatchData(channelId);
+    console.log('[bg] Watch data:', JSON.stringify(watchData, null, 2));
+
+    console.log('[bg] Creating offscreen document...');
     await ensureOffscreen();
+    console.log('[bg] Offscreen ready, sending connect message');
 
     chrome.runtime.sendMessage({
       type: 'connect',
@@ -106,6 +114,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'popup_getStatus') {
     sendResponse({ status: currentStatus });
     return true;
+  }
+
+  // offscreenからのログ転送
+  if (msg.type === 'log') {
+    console.log(msg.data);
+    return;
   }
 
   // offscreenからのステータス更新

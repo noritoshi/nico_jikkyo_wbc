@@ -1,7 +1,13 @@
 // offscreen.js — WebSocket接続をService Worker外で維持するためのオフスクリーンドキュメント
 
+// ログをbackgroundに転送（Service WorkerのDevToolsで見えるようにする）
+function log(...args) {
+  const msg = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
+  chrome.runtime.sendMessage({ type: 'log', data: msg }).catch(() => {});
+}
+
 let watchWs = null;
-let commentWs = null;
+let commentPoller = null; // AbortController for comment polling
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'connect') {
@@ -15,9 +21,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 function closeAll() {
-  if (commentWs) {
-    commentWs.close();
-    commentWs = null;
+  if (commentPoller) {
+    commentPoller.abort();
+    commentPoller = null;
   }
   if (watchWs) {
     watchWs.close();
@@ -32,7 +38,7 @@ async function startConnection({ wsUrl, broadcastId }) {
   watchWs = new WebSocket(wsUrl);
 
   watchWs.onopen = () => {
-    // 視聴開始メッセージを送信
+    log('[offscreen] Watch WS connected, sending startWatching');
     watchWs.send(JSON.stringify({
       type: 'startWatching',
       data: {
@@ -57,89 +63,124 @@ async function startConnection({ wsUrl, broadcastId }) {
     if (msg.type === 'ping') {
       watchWs.send(JSON.stringify({ type: 'pong' }));
       watchWs.send(JSON.stringify({ type: 'keepSeat' }));
+      return;
     }
 
-    // コメントサーバー情報を受信
-    if (msg.type === 'room') {
-      connectCommentServer(msg.data);
+    if (msg.type !== 'ping' && msg.type !== 'statistics') {
+      log('[offscreen] WS msg:', msg.type);
     }
 
-    // messageServer形式（新しいAPI）
+    // 新API: messageServer with viewUri (HTTP streaming)
     if (msg.type === 'messageServer') {
-      connectCommentServer({
-        messageServer: msg.data
-      });
+      log('[offscreen] messageServer received, viewUri:', msg.data.viewUri);
+      startCommentPolling(msg.data.viewUri, msg.data.hashedUserId);
     }
   };
 
   watchWs.onerror = (err) => {
-    console.error('Watch WebSocket error:', err);
+    log('[offscreen] Watch WS error');
     chrome.runtime.sendMessage({ type: 'status', data: 'error' });
   };
 
   watchWs.onclose = () => {
-    console.log('Watch WebSocket closed');
+    log('[offscreen] Watch WS closed');
     chrome.runtime.sendMessage({ type: 'status', data: 'disconnected' });
   };
 }
 
-function connectCommentServer(roomData) {
-  const wsUri = roomData.messageServer?.uri || roomData.messageServer?.webSocketUri;
-  if (!wsUri) {
-    console.error('No comment server URI found in room data:', roomData);
-    return;
-  }
-
-  const threadId = roomData.threadId || roomData.messageServer?.threadId;
-
+// 新API: viewUri からコメントをストリーミング取得
+async function startCommentPolling(viewUri, hashedUserId) {
   chrome.runtime.sendMessage({ type: 'status', data: 'connected' });
 
-  commentWs = new WebSocket(wsUri);
+  commentPoller = new AbortController();
+  const signal = commentPoller.signal;
 
-  commentWs.onopen = () => {
-    // スレッド接続メッセージ（過去コメントは不要、リアルタイムのみ）
-    if (threadId) {
-      commentWs.send(JSON.stringify([
-        { ping: { content: 'rs:0' } },
-        {
-          thread: {
-            thread: String(threadId),
-            version: '20061206',
-            user_id: 'guest',
-            res_from: 0,
-            with_global: 1,
-            scores: 1,
-            nicoru: 0
-          }
-        },
-        { ping: { content: 'rf:0' } }
-      ]));
-    }
-  };
+  // at パラメータ: now (最新コメントのみ取得)
+  let nextUri = viewUri + '?at=now';
 
-  commentWs.onmessage = (event) => {
-    const msg = JSON.parse(event.data);
+  while (!signal.aborted) {
+    try {
+      log('[offscreen] Fetching comments from:', nextUri.substring(0, 100) + '...');
+      const res = await fetch(nextUri, { signal });
 
-    // コメントを受信したらbackgroundに転送
-    if (msg.chat && msg.chat.content) {
-      chrome.runtime.sendMessage({
-        type: 'comment',
-        data: {
-          text: msg.chat.content,
-          vpos: msg.chat.vpos,
-          date: msg.chat.date,
-          mail: msg.chat.mail || '',
-          user_id: msg.chat.user_id
+      if (!res.ok) {
+        log('[offscreen] Comment fetch failed:', res.status);
+        await sleep(3000, signal);
+        continue;
+      }
+
+      const body = await res.text();
+      log('[offscreen] Response length:', body.length, 'first 500 chars:', body.substring(0, 500));
+
+      // レスポンスをパース（NDJSON or JSON）
+      const entries = parseCommentResponse(body);
+
+      for (const entry of entries) {
+        if (entry.chat) {
+          chrome.runtime.sendMessage({
+            type: 'comment',
+            data: {
+              text: entry.chat.content || entry.chat.body || '',
+              vpos: entry.chat.vpos,
+              date: entry.chat.date,
+              mail: entry.chat.mail || '',
+              user_id: entry.chat.user_id || entry.chat.userId || ''
+            }
+          });
         }
-      });
+      }
+
+      // "next" URIを探す
+      const nextEntry = entries.find(e => e.next);
+      if (nextEntry && nextEntry.next) {
+        nextUri = nextEntry.next;
+      } else {
+        // nextがない場合は少し待って同じURIをリトライ
+        await sleep(2000, signal);
+      }
+    } catch (err) {
+      if (signal.aborted) break;
+      log('[offscreen] Comment polling error:', err.message);
+      await sleep(3000, signal);
     }
-  };
+  }
+}
 
-  commentWs.onerror = (err) => {
-    console.error('Comment WebSocket error:', err);
-  };
+function parseCommentResponse(body) {
+  const entries = [];
+  // NDJSON形式の場合（行ごとにJSON）
+  const lines = body.split('\n').filter(l => l.trim());
+  for (const line of lines) {
+    try {
+      entries.push(JSON.parse(line));
+    } catch (e) {
+      // JSONでない行は無視
+    }
+  }
+  // 単一JSONオブジェクトの場合
+  if (entries.length === 0) {
+    try {
+      const obj = JSON.parse(body);
+      if (Array.isArray(obj)) {
+        entries.push(...obj);
+      } else {
+        entries.push(obj);
+      }
+    } catch (e) {
+      log('[offscreen] Failed to parse response:', body.substring(0, 200));
+    }
+  }
+  return entries;
+}
 
-  commentWs.onclose = () => {
-    console.log('Comment WebSocket closed');
-  };
+function sleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    if (signal) {
+      signal.addEventListener('abort', () => {
+        clearTimeout(timer);
+        reject(new Error('aborted'));
+      }, { once: true });
+    }
+  });
 }
