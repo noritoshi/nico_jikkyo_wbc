@@ -210,12 +210,26 @@ async function startCommentStream(viewUri) {
       const { messages } = readFramedMessagesWithRemainder(buf);
 
       let gotNext = false;
+      const allUris = [];
       for (const msgBuf of messages) {
         const result = processChunkedMessage(msgBuf);
         if (result.nextAt) {
           nextAt = result.nextAt;
           gotNext = true;
         }
+        if (result.segmentUris) {
+          allUris.push(...result.segmentUris);
+        }
+      }
+
+      // 最新のセグメントのみ取得（最大2件）
+      // 古いセグメントはスキップしてレイテンシを削減
+      const newUris = allUris.filter(u => !fetchedSegments.has(u));
+      const toFetch = newUris.slice(-2); // 最新2件のみ
+      for (const u of allUris) fetchedSegments.add(u); // 全てマーク済みに
+      for (const u of toFetch) {
+        log('[mpn] Fetch segment:', u.substring(0, 80));
+        fetchSegment(u);
       }
 
       if (!gotNext) {
@@ -274,42 +288,40 @@ function processChunkedMessage(msgBuf) {
     }
   }
 
-  // Look for segment URIs in all nested bytes fields
-  findAndFetchSegments(fields, 0);
+  // セグメントURIを収集
+  const uris = collectSegmentUris(fields);
+  result.segmentUris = uris;
 
   return result;
 }
 
 const fetchedSegments = new Set();
 
-function findAndFetchSegments(fields, depth) {
-  if (depth > 5) return;
+// セグメントURIを収集（fetchはしない）
+function collectSegmentUris(fields, depth = 0) {
+  const uris = [];
+  if (depth > 5) return uris;
   for (const [fn, values] of Object.entries(fields)) {
     for (const v of values) {
       if (v.type === 'bytes') {
         const str = bytesToString(v.data);
-        // Check if this is a segment URI
         if (str.startsWith('https://') && !fetchedSegments.has(str)) {
-          // backward segments (old comments) and snapshot segments (embedded content) are not needed
           if (str.includes('/backward/') || str.includes('/snapshot/')) {
-            log('[mpn] Skipping:', str.includes('/backward/') ? 'backward' : 'snapshot');
             fetchedSegments.add(str);
           } else {
-            log('[mpn] Found URI in f' + fn + ':', str.substring(0, 120));
-            fetchedSegments.add(str);
-            fetchSegment(str);
+            uris.push(str);
           }
         }
-        // Recurse into nested messages
         try {
           const nested = decodeProtobuf(v.data);
           if (Object.keys(nested).length > 0) {
-            findAndFetchSegments(nested, depth + 1);
+            uris.push(...collectSegmentUris(nested, depth + 1));
           }
         } catch (e) {}
       }
     }
   }
+  return uris;
 }
 
 async function fetchSegment(uri) {
