@@ -316,9 +316,9 @@ function findAndFetchSegments(fields, depth) {
         const str = bytesToString(v.data);
         // Check if this is a segment URI
         if (str.startsWith('https://') && !fetchedSegments.has(str)) {
-          // backward segments contain old comments, skip them
-          if (str.includes('/backward/')) {
-            log('[mpn] Skipping backward URI');
+          // backward segments (old comments) and snapshot segments (embedded content) are not needed
+          if (str.includes('/backward/') || str.includes('/snapshot/')) {
+            log('[mpn] Skipping:', str.includes('/backward/') ? 'backward' : 'snapshot');
             fetchedSegments.add(str);
           } else {
             log('[mpn] Found URI in f' + fn + ':', str.substring(0, 120));
@@ -403,6 +403,20 @@ function findComments(fields, depth) {
             );
 
             if (hasString && hasVarint) {
+              // Dump full structure for analysis
+              const info = {};
+              for (const [nfn, nvals] of Object.entries(nested)) {
+                for (const nv of nvals) {
+                  if (nv.type === 'varint') {
+                    info['f' + nfn] = nv.value;
+                  } else if (nv.type === 'bytes') {
+                    const s = bytesToString(nv.data);
+                    info['f' + nfn] = s.length < 100 ? s : s.substring(0, 50) + '...';
+                  }
+                }
+              }
+              log('[comment-fields]', JSON.stringify(info));
+
               // Extract the likely comment text (longest readable string)
               let bestText = '';
               for (const vals of Object.values(nested)) {
