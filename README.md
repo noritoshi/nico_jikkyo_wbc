@@ -63,9 +63,9 @@ A. ニコニコ生放送のチャンネル ID や番組 ID を指定すれば、
 
 ## 不具合報告・改善要望
 
-バグや改善のアイデアがあれば、こちらから教えてください：
+バグや改善のアイデアがあれば、メールで教えてください：
 
-[不具合報告・改善要望はこちら](https://github.com/noritoshi/nico_jikkyo_wbc/issues/new)
+**nicojikkyowbc+app@gmail.com**
 
 ---
 
