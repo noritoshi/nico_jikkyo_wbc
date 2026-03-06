@@ -1,4 +1,4 @@
-// offscreen.js — WebSocket接続をService Worker外で維持するためのオフスクリーンドキュメント
+// offscreen.js — WebSocket接続 + mpn protobufコメント取得
 
 function log(...args) {
   const msg = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
@@ -32,7 +32,7 @@ function closeAll() {
 }
 
 // ============================================================
-// Minimal Protobuf Decoder (wire format only, no schema needed)
+// Protobuf Decoder
 // ============================================================
 
 function decodeVarint(buf, offset) {
@@ -45,44 +45,42 @@ function decodeVarint(buf, offset) {
     pos++;
     if ((byte & 0x80) === 0) break;
     shift += 7;
+    if (shift > 35) break; // prevent infinite loop on bad data
   }
-  return { value: result, nextOffset: pos };
+  return { value: result >>> 0, nextOffset: pos };
 }
 
-// Decode protobuf into a generic object: { fieldNumber: [values...] }
-function decodeProtobuf(buf, offset = 0, end = buf.length) {
+function decodeProtobuf(buf, offset = 0, end = undefined) {
+  if (end === undefined) end = buf.length;
   const fields = {};
   let pos = offset;
   while (pos < end) {
     const tag = decodeVarint(buf, pos);
     pos = tag.nextOffset;
-    if (pos > end) break;
+    if (pos > end || tag.value === 0) break;
 
-    const fieldNumber = tag.value >> 3;
+    const fieldNumber = tag.value >>> 3;
     const wireType = tag.value & 0x7;
 
     if (wireType === 0) {
-      // varint
       const val = decodeVarint(buf, pos);
       pos = val.nextOffset;
       if (!fields[fieldNumber]) fields[fieldNumber] = [];
       fields[fieldNumber].push({ type: 'varint', value: val.value });
     } else if (wireType === 2) {
-      // length-delimited
       const len = decodeVarint(buf, pos);
       pos = len.nextOffset;
+      if (pos + len.value > end) break;
       const data = buf.slice(pos, pos + len.value);
       pos += len.value;
       if (!fields[fieldNumber]) fields[fieldNumber] = [];
       fields[fieldNumber].push({ type: 'bytes', data });
     } else if (wireType === 5) {
-      // 32-bit
       pos += 4;
     } else if (wireType === 1) {
-      // 64-bit
       pos += 8;
     } else {
-      break; // unknown wire type
+      break;
     }
   }
   return fields;
@@ -92,140 +90,48 @@ function bytesToString(bytes) {
   return new TextDecoder().decode(bytes);
 }
 
-// Try to decode bytes as a nested protobuf message
-function tryDecodeNested(bytes) {
-  try {
-    const result = decodeProtobuf(bytes);
-    if (Object.keys(result).length > 0) return result;
-  } catch (e) {}
-  return null;
-}
-
-// Read length-delimited protobuf messages from a buffer (chunked format)
-function readChunkedMessages(buf) {
+// Read length-delimited framed messages (varint length prefix)
+function readFramedMessages(buf) {
   const messages = [];
   let pos = 0;
   while (pos < buf.length) {
     const len = decodeVarint(buf, pos);
     pos = len.nextOffset;
-    if (pos + len.value > buf.length) break;
-    const msgBuf = buf.slice(pos, pos + len.value);
+    if (len.value === 0 || pos + len.value > buf.length) break;
+    messages.push(buf.slice(pos, pos + len.value));
     pos += len.value;
-    messages.push(msgBuf);
   }
   return messages;
 }
 
-// Extract all string values from protobuf fields recursively
-function extractStrings(fields, depth = 0) {
-  const strings = [];
-  if (depth > 5) return strings;
+function dumpFields(fields, prefix = '', depth = 0) {
+  if (depth > 4) return;
   for (const [fn, values] of Object.entries(fields)) {
     for (const v of values) {
-      if (v.type === 'bytes') {
-        // Try as string
+      if (v.type === 'varint') {
+        log(`${prefix}f${fn}: varint=${v.value}`);
+      } else if (v.type === 'bytes') {
         const str = bytesToString(v.data);
-        if (str && /^[\x20-\x7e\u3000-\u9fff\uff00-\uffef]+$/.test(str.trim())) {
-          strings.push({ field: fn, value: str });
-        }
-        // Try as nested message
-        const nested = tryDecodeNested(v.data);
-        if (nested) {
-          strings.push(...extractStrings(nested, depth + 1).map(s => ({
-            field: fn + '.' + s.field,
-            value: s.value
-          })));
-        }
-      }
-    }
-  }
-  return strings;
-}
-
-// Extract URIs from protobuf
-function extractUris(fields, depth = 0) {
-  const uris = [];
-  if (depth > 5) return uris;
-  for (const [fn, values] of Object.entries(fields)) {
-    for (const v of values) {
-      if (v.type === 'bytes') {
-        const str = bytesToString(v.data);
-        if (str && str.startsWith('https://')) {
-          uris.push(str);
-        }
-        const nested = tryDecodeNested(v.data);
-        if (nested) {
-          uris.push(...extractUris(nested, depth + 1));
-        }
-      }
-    }
-  }
-  return uris;
-}
-
-// ============================================================
-// Comment extraction from protobuf
-// ============================================================
-
-// NiconamaMessage.chat typically has:
-//   field 1: raw body (string) - old format
-//   field 3: content (string) - comment text
-//   field 5: vpos (varint)
-//   field 6: mail/command (string)
-// The actual field numbers depend on the proto schema.
-// We extract all readable strings as potential comments.
-
-function extractComments(segmentBuf) {
-  const comments = [];
-  // The segment may contain length-delimited chunks
-  const chunks = readChunkedMessages(segmentBuf);
-
-  for (const chunk of chunks) {
-    const fields = decodeProtobuf(chunk);
-    const extracted = extractCommentsFromFields(fields, 0);
-    comments.push(...extracted);
-  }
-
-  // If no chunks parsed, try direct decode
-  if (comments.length === 0) {
-    const fields = decodeProtobuf(segmentBuf);
-    comments.push(...extractCommentsFromFields(fields, 0));
-  }
-
-  return comments;
-}
-
-function extractCommentsFromFields(fields, depth) {
-  const comments = [];
-  if (depth > 6) return comments;
-
-  for (const [fn, values] of Object.entries(fields)) {
-    for (const v of values) {
-      if (v.type === 'bytes') {
-        const nested = tryDecodeNested(v.data);
-        if (nested) {
-          // Check if this looks like a comment message (has a string field that looks like text)
-          const strs = extractStrings(nested, 0);
-          const hasText = strs.some(s => s.value.length >= 1 && s.value.length < 200);
-          const hasUri = strs.some(s => s.value.startsWith('https://'));
-
-          if (hasText && !hasUri) {
-            // This might be a comment - get the longest non-URL string as the text
-            const textCandidates = strs
-              .filter(s => !s.value.startsWith('https://') && s.value.length >= 1)
-              .sort((a, b) => b.value.length - a.value.length);
-            if (textCandidates.length > 0) {
-              comments.push({ text: textCandidates[0].value });
+        const printable = str.replace(/[^\x20-\x7e\u3000-\u9fff\uff00-\uffef]/g, '');
+        if (printable.length > str.length * 0.6 && str.length < 300) {
+          log(`${prefix}f${fn}: str="${str.substring(0, 200)}"`);
+        } else {
+          log(`${prefix}f${fn}: bytes(${v.data.length})=${hex(v.data, 20)}`);
+          // try nested
+          try {
+            const nested = decodeProtobuf(v.data);
+            if (Object.keys(nested).length > 0) {
+              dumpFields(nested, prefix + '  ', depth + 1);
             }
-          }
-
-          // Recurse
-          comments.push(...extractCommentsFromFields(nested, depth + 1));
+          } catch (e) {}
         }
       }
     }
   }
-  return comments;
+}
+
+function hex(buf, maxBytes = 30) {
+  return Array.from(buf.slice(0, maxBytes)).map(b => b.toString(16).padStart(2, '0')).join(' ');
 }
 
 // ============================================================
@@ -234,11 +140,10 @@ function extractCommentsFromFields(fields, depth) {
 
 async function startConnection({ wsUrl, broadcastId }) {
   chrome.runtime.sendMessage({ type: 'status', data: 'connecting' });
-
   watchWs = new WebSocket(wsUrl);
 
   watchWs.onopen = () => {
-    log('[offscreen] Watch WS connected');
+    log('[ws] connected');
     watchWs.send(JSON.stringify({
       type: 'startWatching',
       data: {
@@ -259,181 +164,228 @@ async function startConnection({ wsUrl, broadcastId }) {
 
   watchWs.onmessage = (event) => {
     const msg = JSON.parse(event.data);
-
     if (msg.type === 'ping') {
       watchWs.send(JSON.stringify({ type: 'pong' }));
       watchWs.send(JSON.stringify({ type: 'keepSeat' }));
       return;
     }
-
-    if (msg.type !== 'statistics') {
-      log('[offscreen] WS msg:', msg.type);
-    }
-
     if (msg.type === 'messageServer') {
-      log('[offscreen] messageServer viewUri:', msg.data.viewUri);
+      log('[ws] messageServer:', JSON.stringify(msg.data));
       startCommentStream(msg.data.viewUri);
     }
   };
 
   watchWs.onerror = () => {
-    log('[offscreen] Watch WS error');
     chrome.runtime.sendMessage({ type: 'status', data: 'error' });
   };
-
   watchWs.onclose = () => {
-    log('[offscreen] Watch WS closed');
     chrome.runtime.sendMessage({ type: 'status', data: 'disconnected' });
   };
 }
 
 // ============================================================
-// Comment stream via mpn viewUri (protobuf)
+// mpn Comment Stream (protobuf, streaming fetch)
 // ============================================================
 
 async function startCommentStream(viewUri) {
   chrome.runtime.sendMessage({ type: 'status', data: 'connected' });
-
   commentAbort = new AbortController();
   const signal = commentAbort.signal;
 
   try {
-    // Step 1: Fetch viewUri to get segment URIs
-    log('[offscreen] Fetching viewUri...');
-    const res = await fetch(viewUri + '?at=now', { signal });
-    const contentType = res.headers.get('content-type');
-    log('[offscreen] viewUri content-type:', contentType);
+    // パラメータなしでストリーミング取得を試みる
+    log('[mpn] Fetching viewUri (streaming)...');
+    const res = await fetch(viewUri, { signal });
+    log('[mpn] Status:', res.status, 'Content-Type:', res.headers.get('content-type'));
 
-    const buf = new Uint8Array(await res.arrayBuffer());
-    log('[offscreen] viewUri response bytes:', buf.length, 'hex:', Array.from(buf.slice(0, 50)).map(b => b.toString(16).padStart(2, '0')).join(' '));
+    const reader = res.body.getReader();
+    let buffer = new Uint8Array(0);
 
-    // Decode protobuf to find segment URIs
-    const fields = decodeProtobuf(buf);
-    log('[offscreen] viewUri top-level fields:', Object.keys(fields));
-
-    const uris = extractUris(fields);
-    log('[offscreen] Found URIs in viewUri response:', uris);
-
-    // Find segment URIs (typically contain /segment/)
-    const segmentUris = uris.filter(u => u.includes('segment'));
-    const nextUris = uris.filter(u => u.includes('next') || u.includes('at='));
-
-    log('[offscreen] Segment URIs:', segmentUris.length, 'Next URIs:', nextUris.length);
-
-    if (segmentUris.length > 0) {
-      // Fetch latest segment
-      await pollSegments(segmentUris[segmentUris.length - 1], signal);
-    } else if (uris.length > 0) {
-      // Try all URIs
-      log('[offscreen] No segment URIs found, trying all URIs...');
-      for (const uri of uris) {
-        log('[offscreen] Trying URI:', uri.substring(0, 100));
-        await fetchAndProcessSegment(uri, signal);
+    while (!signal.aborted) {
+      const { done, value } = await reader.read();
+      if (done) {
+        log('[mpn] Stream ended');
+        break;
       }
-      // Continue polling viewUri
-      await pollViewUri(viewUri, signal);
-    } else {
-      log('[offscreen] No URIs found in viewUri response, dumping structure...');
-      dumpProtobuf(fields, '', 0);
-      // Poll the viewUri itself for changes
-      await pollViewUri(viewUri, signal);
+
+      // Append to buffer
+      const newBuf = new Uint8Array(buffer.length + value.length);
+      newBuf.set(buffer);
+      newBuf.set(value, buffer.length);
+      buffer = newBuf;
+
+      log('[mpn] Received chunk:', value.length, 'bytes, buffer total:', buffer.length);
+
+      // Try to read framed messages from buffer
+      const { messages, remaining } = readFramedMessagesWithRemainder(buffer);
+      buffer = remaining;
+
+      for (const msgBuf of messages) {
+        processChunkedMessage(msgBuf);
+      }
     }
   } catch (err) {
     if (!signal.aborted) {
-      log('[offscreen] Comment stream error:', err.message);
+      log('[mpn] Stream error:', err.message);
     }
   }
 }
 
-async function pollViewUri(viewUri, signal) {
-  while (!signal.aborted) {
-    await sleep(3000, signal);
-    try {
-      const res = await fetch(viewUri + '?at=now', { signal });
-      const buf = new Uint8Array(await res.arrayBuffer());
-      const fields = decodeProtobuf(buf);
-      const uris = extractUris(fields);
+function readFramedMessagesWithRemainder(buf) {
+  const messages = [];
+  let pos = 0;
+  while (pos < buf.length) {
+    const len = decodeVarint(buf, pos);
+    const headerSize = len.nextOffset - pos;
+    if (len.value === 0) { pos = len.nextOffset; continue; }
+    if (len.nextOffset + len.value > buf.length) break; // incomplete message
+    messages.push(buf.slice(len.nextOffset, len.nextOffset + len.value));
+    pos = len.nextOffset + len.value;
+  }
+  return { messages, remaining: buf.slice(pos) };
+}
 
-      const segmentUris = uris.filter(u => u.includes('segment'));
-      if (segmentUris.length > 0) {
-        await pollSegments(segmentUris[segmentUris.length - 1], signal);
-        return;
+// Process a single ChunkedMessage
+// Based on observed niconico protobuf structure:
+// field 1: state (ChunkedState)
+// field 2: signal
+// field 3: backward segment
+// field 4: next / signal with timestamp
+function processChunkedMessage(msgBuf) {
+  const fields = decodeProtobuf(msgBuf);
+  log('[mpn] ChunkedMessage fields:', Object.keys(fields).join(','));
+  dumpFields(fields, '  ');
+
+  // Look for segment URIs in all nested bytes fields
+  findAndFetchSegments(fields, 0);
+}
+
+const fetchedSegments = new Set();
+
+function findAndFetchSegments(fields, depth) {
+  if (depth > 5) return;
+  for (const [fn, values] of Object.entries(fields)) {
+    for (const v of values) {
+      if (v.type === 'bytes') {
+        const str = bytesToString(v.data);
+        // Check if this is a segment URI
+        if (str.startsWith('https://') && !fetchedSegments.has(str)) {
+          log('[mpn] Found URI in f' + fn + ':', str.substring(0, 120));
+          fetchedSegments.add(str);
+          fetchSegment(str);
+        }
+        // Recurse into nested messages
+        try {
+          const nested = decodeProtobuf(v.data);
+          if (Object.keys(nested).length > 0) {
+            findAndFetchSegments(nested, depth + 1);
+          }
+        } catch (e) {}
       }
+    }
+  }
+}
 
-      // Try to extract comments directly from viewUri response
-      const comments = extractComments(buf);
-      for (const c of comments) {
-        emitComment(c.text);
+async function fetchSegment(uri) {
+  try {
+    const signal = commentAbort?.signal;
+    const res = await fetch(uri, { signal });
+    const buf = new Uint8Array(await res.arrayBuffer());
+    log('[seg] Fetched segment:', buf.length, 'bytes from', uri.substring(0, 80));
+
+    if (buf.length < 10) {
+      log('[seg] Segment too small, skipping');
+      return;
+    }
+
+    // Try framed messages first
+    const framed = readFramedMessages(buf);
+    if (framed.length > 0) {
+      log('[seg] Framed messages:', framed.length);
+      for (const frame of framed) {
+        extractAndEmitComments(frame);
       }
-    } catch (err) {
-      if (signal.aborted) break;
-      log('[offscreen] pollViewUri error:', err.message);
+    } else {
+      // Try direct decode
+      extractAndEmitComments(buf);
     }
+  } catch (err) {
+    log('[seg] Fetch error:', err.message);
   }
 }
 
-async function pollSegments(segmentUri, signal) {
-  log('[offscreen] Polling segment:', segmentUri.substring(0, 100));
+function extractAndEmitComments(msgBuf) {
+  const fields = decodeProtobuf(msgBuf);
 
-  while (!signal.aborted) {
-    try {
-      await fetchAndProcessSegment(segmentUri, signal);
-    } catch (err) {
-      if (signal.aborted) break;
-      log('[offscreen] Segment poll error:', err.message);
-    }
-    await sleep(2000, signal);
-  }
+  // Recursively look for comment text in all nested messages
+  findComments(fields, 0);
 }
 
-async function fetchAndProcessSegment(uri, signal) {
-  const res = await fetch(uri, { signal });
-  const buf = new Uint8Array(await res.arrayBuffer());
-  log('[offscreen] Segment response bytes:', buf.length);
+// Known niconico comment structure in protobuf:
+// A comment message typically has a string field containing the comment text
+// and numeric fields for metadata (vpos, date, etc.)
+function findComments(fields, depth) {
+  if (depth > 6) return;
 
-  if (buf.length > 20) {
-    const comments = extractComments(buf);
-    log('[offscreen] Extracted comments:', comments.length);
-    for (const c of comments) {
-      emitComment(c.text);
+  // Check all bytes fields
+  for (const [fn, values] of Object.entries(fields)) {
+    for (const v of values) {
+      if (v.type === 'bytes') {
+        try {
+          const nested = decodeProtobuf(v.data);
+          if (Object.keys(nested).length > 0) {
+            // Check if this message looks like a comment:
+            // Has at least one string field (text) and at least one varint field (metadata)
+            const hasString = Object.values(nested).some(vals =>
+              vals.some(val => {
+                if (val.type !== 'bytes') return false;
+                const s = bytesToString(val.data);
+                // Must be displayable text, not a URL or binary
+                return s.length >= 1 && s.length < 200
+                  && !s.startsWith('https://')
+                  && /[\u3000-\u9fff\uff00-\uffefA-Za-z0-9]/.test(s);
+              })
+            );
+            const hasVarint = Object.values(nested).some(vals =>
+              vals.some(val => val.type === 'varint')
+            );
+
+            if (hasString && hasVarint) {
+              // Extract the likely comment text (longest readable string)
+              let bestText = '';
+              for (const vals of Object.values(nested)) {
+                for (const val of vals) {
+                  if (val.type === 'bytes') {
+                    const s = bytesToString(val.data);
+                    if (s.length > bestText.length && s.length < 200
+                      && !s.startsWith('https://')
+                      && /[\u3000-\u9fff\uff00-\uffefA-Za-z0-9]/.test(s)) {
+                      bestText = s;
+                    }
+                  }
+                }
+              }
+              if (bestText) {
+                emitComment(bestText);
+              }
+            }
+
+            // Recurse
+            findComments(nested, depth + 1);
+          }
+        } catch (e) {}
+      }
     }
   }
 }
 
 function emitComment(text) {
   if (!text || text.length === 0) return;
+  log('[comment]', text.substring(0, 50));
   chrome.runtime.sendMessage({
     type: 'comment',
-    data: {
-      text: text,
-      mail: '',
-      user_id: ''
-    }
+    data: { text, mail: '', user_id: '' }
   });
-}
-
-function dumpProtobuf(fields, prefix, depth) {
-  if (depth > 3) return;
-  for (const [fn, values] of Object.entries(fields)) {
-    for (const v of values) {
-      if (v.type === 'varint') {
-        log(prefix + `field ${fn}: varint = ${v.value}`);
-      } else if (v.type === 'bytes') {
-        const str = bytesToString(v.data);
-        const isReadable = /^[\x20-\x7e\u0080-\uffff]+$/.test(str);
-        if (isReadable && str.length < 200) {
-          log(prefix + `field ${fn}: string = "${str}"`);
-        } else {
-          log(prefix + `field ${fn}: bytes(${v.data.length}) = ${Array.from(v.data.slice(0, 30)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
-          const nested = tryDecodeNested(v.data);
-          if (nested) {
-            log(prefix + `field ${fn}: (nested message)`);
-            dumpProtobuf(nested, prefix + '  ', depth + 1);
-          }
-        }
-      }
-    }
-  }
 }
 
 function sleep(ms, signal) {
