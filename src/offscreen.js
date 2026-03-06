@@ -28,6 +28,7 @@ function closeAll() {
     watchWs.close();
     watchWs = null;
   }
+  fetchedSegments.clear();
   chrome.runtime.sendMessage({ type: 'status', data: 'disconnected' });
 }
 
@@ -223,7 +224,6 @@ async function startCommentStream(viewUri) {
       }
 
       // 最新のセグメントのみ取得（最大2件）
-      // 古いセグメントはスキップしてレイテンシを削減
       const newUris = allUris.filter(u => !fetchedSegments.has(u));
       const toFetch = newUris.slice(-2); // 最新2件のみ
       for (const u of allUris) fetchedSegments.add(u); // 全てマーク済みに
@@ -306,7 +306,8 @@ function collectSegmentUris(fields, depth = 0) {
       if (v.type === 'bytes') {
         const str = bytesToString(v.data);
         if (str.startsWith('https://') && !fetchedSegments.has(str)) {
-          if (str.includes('/backward/') || str.includes('/snapshot/')) {
+          if (str.includes('/snapshot/') || str.includes('/backward/')) {
+            // snapshot（埋め込みコンテンツ）とbackward（過去コメント）はスキップ
             fetchedSegments.add(str);
           } else {
             uris.push(str);
