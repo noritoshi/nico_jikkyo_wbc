@@ -1,13 +1,11 @@
 {
   "manifest_version": 3,
-  "name": "Niko Jikkyo WBC",
-  "version": "0.1.0",
-  "description": "ニコニコ生放送の実況コメントをNetflix/WBC映像の上に流すChrome拡張",
+  "name": "Niko Jikkyo",
+  "version": "0.4.0",
+  "description": "2026 WBC Netflix配信をニコニコ実況コメントと一緒に楽しむためのChrome拡張。ニコニコ生放送のコメントをNetflix映像の上にニコニコ風に流します。",
   "permissions": [
-    "cookies",
     "offscreen",
-    "storage",
-    "tabs"
+    "storage"
   ],
   "host_permissions": [
     "https://*.nicovideo.jp/*",
@@ -28,6 +26,6 @@
   ],
   "action": {
     "default_popup": "src/popup.html",
-    "default_title": "Niko Jikkyo WBC"
+    "default_title": "Niko Jikkyo"
   }
 }

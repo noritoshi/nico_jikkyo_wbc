@@ -1,5 +1,8 @@
 // background.js — Service Worker: ニコニコAPIへの接続管理とコメント転送
 
+const DEBUG = false; // デバッグログの有効/無効
+function debugLog(...args) { if (DEBUG) console.log(...args); }
+
 let currentStatus = 'disconnected';
 
 // offscreenドキュメントの作成
@@ -36,9 +39,7 @@ async function fetchWatchData(channelId) {
     .replace(/&#39;/g, "'");
 
   const data = JSON.parse(decoded);
-  console.log('[bg] Parsed embedded data keys:', Object.keys(data));
-  console.log('[bg] data.site:', JSON.stringify(data.site, null, 2)?.substring(0, 500));
-  console.log('[bg] data.program:', JSON.stringify(data.program, null, 2)?.substring(0, 500));
+  debugLog('[bg] Parsed embedded data keys:', Object.keys(data));
 
   // WebSocket URLを探す
   const wsUrl = data.site?.relive?.webSocketUrl
@@ -56,13 +57,11 @@ async function fetchWatchData(channelId) {
 // 接続開始
 async function connect(channelId) {
   try {
-    console.log('[bg] Fetching watch data for:', channelId);
+    debugLog('[bg] Fetching watch data for:', channelId);
     const watchData = await fetchWatchData(channelId);
-    console.log('[bg] Watch data:', JSON.stringify(watchData, null, 2));
+    debugLog('[bg] Watch data:', JSON.stringify(watchData));
 
-    console.log('[bg] Creating offscreen document...');
     await ensureOffscreen();
-    console.log('[bg] Offscreen ready, sending connect message');
 
     chrome.runtime.sendMessage({
       type: 'connect',
@@ -118,14 +117,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   // offscreenからのログ転送
   if (msg.type === 'log') {
-    console.log(msg.data);
+    debugLog(msg.data);
     return;
   }
 
   // offscreenからのステータス更新
   if (msg.type === 'status') {
     currentStatus = msg.data;
-    // popupに転送
     chrome.runtime.sendMessage({
       type: 'statusUpdate',
       data: { status: msg.data }
@@ -133,19 +131,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return;
   }
 
-  // offscreenからのコメント受信 → content_scriptに転送
+  // offscreenからのコメント受信 → content_scriptに転送（port経由）
   if (msg.type === 'comment') {
-    chrome.tabs.query({}, (tabs) => {
-      console.log('[bg] All tabs:', tabs.map(t => t.url?.substring(0, 50)));
-      const netflixTabs = tabs.filter(t => t.url?.startsWith('https://www.netflix.com'));
-      console.log('[bg] Netflix tabs found:', netflixTabs.length);
-      for (const tab of netflixTabs) {
-        chrome.tabs.sendMessage(tab.id, {
-          type: 'comment',
-          data: msg.data
-        }).catch(err => console.log('[bg] sendMessage error:', err.message));
-      }
-    });
+    for (const port of contentPorts) {
+      try { port.postMessage(msg.data); } catch (e) {}
+    }
     return;
+  }
+});
+
+// content_scriptからのport接続を管理（tabs権限不要）
+const contentPorts = new Set();
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name === 'niko-jikkyo') {
+    contentPorts.add(port);
+    port.onDisconnect.addListener(() => contentPorts.delete(port));
   }
 });

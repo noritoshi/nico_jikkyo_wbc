@@ -1,14 +1,8 @@
 // content_script.js — Netflix上にコメントオーバーレイを描画
-console.log('[niko-jikkyo] content_script loaded on', location.href);
 
 const LANE_COUNT = 12;
 const COMMENT_DURATION = 7000; // ms
 const lanes = new Array(LANE_COUNT).fill(0); // 各レーンの解放時刻
-
-// コメント表示: ストリーミングで届いたコメントを即座に表示
-function enqueueComment(commentData) {
-  renderComment(commentData);
-}
 
 function getOverlay() {
   let overlay = document.getElementById('niko-jikkyo-overlay');
@@ -76,9 +70,8 @@ function renderComment(commentData) {
   el.addEventListener('animationend', () => el.remove());
 }
 
-// backgroundからのメッセージを受信
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg.type === 'comment') {
-    enqueueComment(msg.data);
-  }
+// backgroundからのコメント受信（port接続方式）
+const port = chrome.runtime.connect({ name: 'niko-jikkyo' });
+port.onMessage.addListener((commentData) => {
+  renderComment(commentData);
 });

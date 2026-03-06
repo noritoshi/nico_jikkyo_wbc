@@ -1,6 +1,8 @@
 // offscreen.js — WebSocket接続 + mpn protobufコメント取得
 
+const DEBUG = false; // デバッグログの有効/無効
 function log(...args) {
+  if (!DEBUG) return;
   const msg = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
   chrome.runtime.sendMessage({ type: 'log', data: msg }).catch(() => {});
 }
