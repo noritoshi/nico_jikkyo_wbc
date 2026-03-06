@@ -1,4 +1,5 @@
 // content_script.js — Netflix上にコメントオーバーレイを描画
+console.log('[niko-jikkyo] content_script loaded on', location.href);
 
 const LANE_COUNT = 12;
 const COMMENT_DURATION = 7000; // ms
@@ -79,6 +80,7 @@ function renderComment(commentData) {
 // backgroundからのメッセージを受信
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'comment') {
+    console.log('[niko-jikkyo] Received comment:', msg.data.text?.substring(0, 30));
     renderComment(msg.data);
   }
 });

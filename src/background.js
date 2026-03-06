@@ -135,13 +135,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   // offscreenからのコメント受信 → content_scriptに転送
   if (msg.type === 'comment') {
-    // Netflixタブを探してコメントを送信
-    chrome.tabs.query({ url: 'https://www.netflix.com/*' }, (tabs) => {
-      for (const tab of tabs) {
+    chrome.tabs.query({}, (tabs) => {
+      console.log('[bg] All tabs:', tabs.map(t => t.url?.substring(0, 50)));
+      const netflixTabs = tabs.filter(t => t.url?.startsWith('https://www.netflix.com'));
+      console.log('[bg] Netflix tabs found:', netflixTabs.length);
+      for (const tab of netflixTabs) {
         chrome.tabs.sendMessage(tab.id, {
           type: 'comment',
           data: msg.data
-        }).catch(() => {});
+        }).catch(err => console.log('[bg] sendMessage error:', err.message));
       }
     });
     return;

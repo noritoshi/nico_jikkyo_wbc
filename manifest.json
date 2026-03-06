@@ -6,7 +6,8 @@
   "permissions": [
     "cookies",
     "offscreen",
-    "storage"
+    "storage",
+    "tabs"
   ],
   "host_permissions": [
     "https://*.nicovideo.jp/*",
