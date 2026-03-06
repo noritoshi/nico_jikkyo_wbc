@@ -5,6 +5,32 @@ const LANE_COUNT = 12;
 const COMMENT_DURATION = 7000; // ms
 const lanes = new Array(LANE_COUNT).fill(0); // 各レーンの解放時刻
 
+// コメント表示キュー: バッチで届くコメントを時間的に分散
+const commentQueue = [];
+let queueTimer = null;
+const MIN_INTERVAL = 300; // コメント間の最小間隔(ms)
+
+function processQueue() {
+  if (commentQueue.length === 0) {
+    queueTimer = null;
+    return;
+  }
+  const commentData = commentQueue.shift();
+  renderComment(commentData);
+
+  // 次のコメントまでの間隔を計算
+  // キューが溜まっていたら短く、少なければ長く
+  const interval = Math.max(MIN_INTERVAL, Math.min(800, 3000 / (commentQueue.length + 1)));
+  queueTimer = setTimeout(processQueue, interval);
+}
+
+function enqueueComment(commentData) {
+  commentQueue.push(commentData);
+  if (!queueTimer) {
+    processQueue();
+  }
+}
+
 function getOverlay() {
   let overlay = document.getElementById('niko-jikkyo-overlay');
   if (!overlay) {
@@ -28,7 +54,6 @@ function findAvailableLane() {
       bestTime = lanes[i];
     }
   }
-  // 全レーン埋まっている場合は最も早く空くレーンを使う
   return best;
 }
 
@@ -58,29 +83,23 @@ function renderComment(commentData) {
   el.className = 'niko-comment';
   el.textContent = commentData.text;
 
-  // 色指定
   const color = getColorFromMail(commentData.mail);
   if (color) el.style.color = color;
 
-  // レーン割り当て
   const lane = findAvailableLane();
-  const topPercent = (lane / LANE_COUNT) * 80 + 5; // 5%〜85%の範囲
+  const topPercent = (lane / LANE_COUNT) * 80 + 5;
   el.style.top = topPercent + '%';
   el.style.left = '100%';
 
-  // レーンの使用時刻を記録（コメントが画面中央を通過するまで）
   lanes[lane] = Date.now() + COMMENT_DURATION * 0.4;
 
   overlay.appendChild(el);
-
-  // アニメーション終了後にDOMから削除
   el.addEventListener('animationend', () => el.remove());
 }
 
 // backgroundからのメッセージを受信
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'comment') {
-    console.log('[niko-jikkyo] Received comment:', msg.data.text?.substring(0, 30));
-    renderComment(msg.data);
+    enqueueComment(msg.data);
   }
 });
