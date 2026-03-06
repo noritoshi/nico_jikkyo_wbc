@@ -343,46 +343,28 @@ async function fetchSegment(uri) {
 function extractAndEmitComments(msgBuf) {
   const fields = decodeProtobuf(msgBuf);
 
-  // セグメント内の各フレームメッセージは以下の構造:
-  // f1: コメントテキスト (bytes/string)
-  // f2: (bytes, 空文字列が多い)
-  // f3: vpos (varint)
-  // f4: score/flag (varint, optional)
-  // f6: ユーザーID (bytes/string, "a:xxxx")
-  // f7: (bytes)
-  // f8: コメント番号 (varint)
-  //
-  // ただしメッセージは1段ネストされている場合がある
+  // 構造: フレーム → f2 (comment wrapper) → f1 (comment protobuf) → f1=text, f3=vpos
+  // f2がないフレーム（f4のみ等）はメタデータなのでスキップ
+  if (!fields[2]) return;
 
-  // 直接f1がある場合（フラットな構造）
-  if (fields[1] && fields[3]) {
-    const f1 = fields[1][0];
-    const f3 = fields[3][0];
-    if (f1?.type === 'bytes' && f3?.type === 'varint') {
-      const text = bytesToString(f1.data);
-      emitComment(text);
-      return;
-    }
-  }
+  for (const wrapper of fields[2]) {
+    if (wrapper.type !== 'bytes') continue;
+    try {
+      const wrapperFields = decodeProtobuf(wrapper.data);
+      if (!wrapperFields[1]) continue;
 
-  // ネストされている場合: bytes フィールドの中にコメント構造がある
-  for (const [fn, values] of Object.entries(fields)) {
-    for (const v of values) {
-      if (v.type === 'bytes') {
-        try {
-          const nested = decodeProtobuf(v.data);
-          // f1 (text) + f3 (vpos as varint) があればコメント
-          if (nested[1] && nested[3]) {
-            const nf1 = nested[1][0];
-            const nf3 = nested[3][0];
-            if (nf1?.type === 'bytes' && nf3?.type === 'varint') {
-              const text = bytesToString(nf1.data);
-              emitComment(text);
-            }
-          }
-        } catch (e) {}
+      const innerMsg = wrapperFields[1][0];
+      if (innerMsg?.type !== 'bytes') continue;
+
+      const commentFields = decodeProtobuf(innerMsg.data);
+      if (!commentFields[1]) continue;
+
+      const textField = commentFields[1][0];
+      if (textField?.type === 'bytes') {
+        const text = bytesToString(textField.data);
+        emitComment(text);
       }
-    }
+    } catch (e) {}
   }
 }
 
