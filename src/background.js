@@ -11,7 +11,7 @@ async function ensureOffscreen() {
 
   await chrome.offscreen.createDocument({
     url: 'src/offscreen.html',
-    reasons: ['WEB_RTC_MEDIA_STREAMING'],
+    reasons: ['WEB_RTC'],
     justification: 'ニコニコ生放送のWebSocket接続を維持するため'
   });
 }
