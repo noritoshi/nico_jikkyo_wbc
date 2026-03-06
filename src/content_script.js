@@ -1,5 +1,9 @@
 // content_script.js — Netflix上にコメントオーバーレイを描画
 
+// 二重注入ガード
+if (window.__nikoJikkyoLoaded) { /* already loaded */ } else {
+window.__nikoJikkyoLoaded = true;
+
 const LANE_COUNT = 12;
 const COMMENT_DURATION = 7000; // ms
 const lanes = new Array(LANE_COUNT).fill(0); // 各レーンの解放時刻
@@ -75,3 +79,5 @@ const port = chrome.runtime.connect({ name: 'niko-jikkyo' });
 port.onMessage.addListener((commentData) => {
   renderComment(commentData);
 });
+
+} // end of guard

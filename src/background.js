@@ -54,6 +54,25 @@ async function fetchWatchData(channelId) {
   return { wsUrl, broadcastId, title: data.program?.title || channelId };
 }
 
+// Netflixタブにcontent_scriptを注入（まだ注入されていない場合）
+async function ensureContentScript() {
+  const tabs = await chrome.tabs.query({ url: 'https://www.netflix.com/*' });
+  for (const tab of tabs) {
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ['src/content_script.js']
+      });
+      await chrome.scripting.insertCSS({
+        target: { tabId: tab.id },
+        files: ['src/content_style.css']
+      });
+    } catch (e) {
+      debugLog('[bg] Script injection skipped for tab', tab.id, e.message);
+    }
+  }
+}
+
 // 接続開始
 async function connect(channelId) {
   try {
@@ -61,6 +80,7 @@ async function connect(channelId) {
     const watchData = await fetchWatchData(channelId);
     debugLog('[bg] Watch data:', JSON.stringify(watchData));
 
+    await ensureContentScript();
     await ensureOffscreen();
 
     chrome.runtime.sendMessage({
