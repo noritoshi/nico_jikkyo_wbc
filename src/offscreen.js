@@ -197,61 +197,35 @@ async function startCommentStream(viewUri) {
   while (!signal.aborted) {
     try {
       const url = viewUri + '?at=' + nextAt;
-      log('[mpn] Fetching:', url.substring(0, 120) + '...');
       const res = await fetch(url, { signal });
 
       if (!res.ok) {
         log('[mpn] HTTP error:', res.status);
-        await sleep(3000, signal);
+        await sleep(2000, signal);
         continue;
       }
 
-      // ストリーミングで読み取り
-      const reader = res.body.getReader();
-      let buffer = new Uint8Array(0);
+      // レスポンス全体をすばやく読み取り
+      const buf = new Uint8Array(await res.arrayBuffer());
+      const { messages } = readFramedMessagesWithRemainder(buf);
+
       let gotNext = false;
-
-      while (!signal.aborted) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const newBuf = new Uint8Array(buffer.length + value.length);
-        newBuf.set(buffer);
-        newBuf.set(value, buffer.length);
-        buffer = newBuf;
-
-        const { messages, remaining } = readFramedMessagesWithRemainder(buffer);
-        buffer = remaining;
-
-        for (const msgBuf of messages) {
-          const result = processChunkedMessage(msgBuf);
-          if (result.nextAt) {
-            nextAt = result.nextAt;
-            gotNext = true;
-          }
-        }
-      }
-
-      // Process any remaining buffer
-      if (buffer.length > 0) {
-        const { messages } = readFramedMessagesWithRemainder(buffer);
-        for (const msgBuf of messages) {
-          const result = processChunkedMessage(msgBuf);
-          if (result.nextAt) {
-            nextAt = result.nextAt;
-            gotNext = true;
-          }
+      for (const msgBuf of messages) {
+        const result = processChunkedMessage(msgBuf);
+        if (result.nextAt) {
+          nextAt = result.nextAt;
+          gotNext = true;
         }
       }
 
       if (!gotNext) {
-        // No next pointer found, wait and retry
-        await sleep(1000, signal);
+        await sleep(500, signal);
       }
+      // nextAtを得たら即座に次のリクエスト（待ちなし）
     } catch (err) {
       if (signal.aborted) break;
       log('[mpn] Error:', err.message);
-      await sleep(3000, signal);
+      await sleep(2000, signal);
     }
   }
 }
