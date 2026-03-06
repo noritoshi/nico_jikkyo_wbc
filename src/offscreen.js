@@ -206,36 +206,47 @@ async function startCommentStream(viewUri) {
         continue;
       }
 
-      // レスポンス全体をすばやく読み取り
-      const buf = new Uint8Array(await res.arrayBuffer());
-      const { messages } = readFramedMessagesWithRemainder(buf);
-
+      // ストリーミングで逐次読み取り — フレームが届いた瞬間に処理
+      const reader = res.body.getReader();
+      let buffer = new Uint8Array(0);
       let gotNext = false;
-      const allUris = [];
-      for (const msgBuf of messages) {
-        const result = processChunkedMessage(msgBuf);
-        if (result.nextAt) {
-          nextAt = result.nextAt;
-          gotNext = true;
-        }
-        if (result.segmentUris) {
-          allUris.push(...result.segmentUris);
-        }
-      }
 
-      // 最新のセグメントのみ取得（最大2件）
-      const newUris = allUris.filter(u => !fetchedSegments.has(u));
-      const toFetch = newUris.slice(-2); // 最新2件のみ
-      for (const u of allUris) fetchedSegments.add(u); // 全てマーク済みに
-      for (const u of toFetch) {
-        log('[mpn] Fetch segment:', u.substring(0, 80));
-        fetchSegment(u);
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        // 既存バッファと結合
+        const newBuf = new Uint8Array(buffer.length + value.length);
+        newBuf.set(buffer);
+        newBuf.set(value, buffer.length);
+        buffer = newBuf;
+
+        // 完全なフレームを逐次処理
+        const { messages, remaining } = readFramedMessagesWithRemainder(buffer);
+        buffer = remaining;
+
+        for (const msgBuf of messages) {
+          const result = processChunkedMessage(msgBuf);
+          if (result.nextAt) {
+            nextAt = result.nextAt;
+            gotNext = true;
+          }
+          // セグメントURIを即座にfetch
+          if (result.segmentUris) {
+            for (const uri of result.segmentUris) {
+              if (!fetchedSegments.has(uri)) {
+                fetchedSegments.add(uri);
+                log('[mpn] Fetch segment:', uri.substring(0, 80));
+                fetchSegment(uri);
+              }
+            }
+          }
+        }
       }
 
       if (!gotNext) {
         await sleep(500, signal);
       }
-      // nextAtを得たら即座に次のリクエスト（待ちなし）
     } catch (err) {
       if (signal.aborted) break;
       log('[mpn] Error:', err.message);
@@ -337,28 +348,38 @@ async function fetchSegment(uri) {
       return;
     }
 
-    // Try framed messages first
+    // セグメント全体からコメントを収集
+    const comments = [];
     const framed = readFramedMessages(buf);
-    if (framed.length > 0) {
-      log('[seg] Framed messages:', framed.length);
-      for (const frame of framed) {
-        extractAndEmitComments(frame);
-      }
-    } else {
-      // Try direct decode
-      extractAndEmitComments(buf);
+    const frames = framed.length > 0 ? framed : [buf];
+    log('[seg] Framed messages:', frames.length);
+
+    for (const frame of frames) {
+      const c = extractComment(frame);
+      if (c) comments.push(c);
+    }
+
+    if (comments.length === 0) return;
+
+    // vposでソートして、差分をdelayとして設定
+    comments.sort((a, b) => a.vpos - b.vpos);
+    const baseVpos = comments[0].vpos;
+    log('[seg] Comments:', comments.length, 'vpos range:', baseVpos, '-', comments[comments.length - 1].vpos,
+        'span:', ((comments[comments.length - 1].vpos - baseVpos) * 10) + 'ms');
+
+    for (const c of comments) {
+      const delayMs = Math.max(0, (c.vpos - baseVpos) * 10); // vposは1/100秒
+      emitComment(c.text, delayMs);
     }
   } catch (err) {
     log('[seg] Fetch error:', err.message);
   }
 }
 
-function extractAndEmitComments(msgBuf) {
+// フレームから1コメントを抽出（text + vpos）
+function extractComment(msgBuf) {
   const fields = decodeProtobuf(msgBuf);
-
-  // 構造: フレーム → f2 (comment wrapper) → f1 (comment protobuf) → f1=text, f3=vpos
-  // f2がないフレーム（f4のみ等）はメタデータなのでスキップ
-  if (!fields[2]) return;
+  if (!fields[2]) return null;
 
   for (const wrapper of fields[2]) {
     if (wrapper.type !== 'bytes') continue;
@@ -373,12 +394,14 @@ function extractAndEmitComments(msgBuf) {
       if (!commentFields[1]) continue;
 
       const textField = commentFields[1][0];
-      if (textField?.type === 'bytes') {
-        const text = bytesToString(textField.data);
-        emitComment(text);
-      }
+      if (textField?.type !== 'bytes') continue;
+
+      const text = bytesToString(textField.data);
+      const vpos = commentFields[3]?.[0]?.type === 'varint' ? commentFields[3][0].value : 0;
+      return { text, vpos };
     } catch (e) {}
   }
+  return null;
 }
 
 function isLikelyComment(text) {
@@ -396,12 +419,12 @@ function isLikelyComment(text) {
   return true;
 }
 
-function emitComment(text) {
+function emitComment(text, delayMs = 0) {
   if (!isLikelyComment(text)) return;
-  log('[comment]', text.substring(0, 50));
+  log('[comment]', text.substring(0, 50), 'delay=' + delayMs);
   chrome.runtime.sendMessage({
     type: 'comment',
-    data: { text, mail: '', user_id: '' }
+    data: { text, mail: '', user_id: '', delay: delayMs }
   });
 }
 

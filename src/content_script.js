@@ -5,29 +5,13 @@ const LANE_COUNT = 12;
 const COMMENT_DURATION = 7000; // ms
 const lanes = new Array(LANE_COUNT).fill(0); // 各レーンの解放時刻
 
-// コメント表示キュー: バッチで届くコメントを時間的に分散
-const commentQueue = [];
-let queueTimer = null;
-const MIN_INTERVAL = 300; // コメント間の最小間隔(ms)
-
-function processQueue() {
-  if (commentQueue.length === 0) {
-    queueTimer = null;
-    return;
-  }
-  const commentData = commentQueue.shift();
-  renderComment(commentData);
-
-  // 次のコメントまでの間隔を計算
-  // キューが溜まっていたら短く、少なければ長く
-  const interval = Math.max(MIN_INTERVAL, Math.min(800, 3000 / (commentQueue.length + 1)));
-  queueTimer = setTimeout(processQueue, interval);
-}
-
+// コメント表示: vposベースのdelayに従ってタイミング通りに表示
 function enqueueComment(commentData) {
-  commentQueue.push(commentData);
-  if (!queueTimer) {
-    processQueue();
+  const delay = commentData.delay || 0;
+  if (delay <= 0) {
+    renderComment(commentData);
+  } else {
+    setTimeout(() => renderComment(commentData), delay);
   }
 }
 
