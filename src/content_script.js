@@ -5,6 +5,8 @@ if (window.__nikoJikkyoLoaded) { /* already loaded */ } else {
 window.__nikoJikkyoLoaded = true;
 
 const LANE_COUNT = 12;
+const myPostedComments = new Set(); // 自分が投稿したコメントテキスト
+const recentRendered = []; // 表示済みコメント（重複排除用）
 const COMMENT_DURATION = 7000; // ms
 const lanes = new Array(LANE_COUNT).fill(0); // 各レーンの解放時刻
 
@@ -55,9 +57,19 @@ function getColorFromMail(mail) {
 }
 
 function renderComment(commentData) {
+  // 3秒以内の同一テキストは重複として無視
+  const now = Date.now();
+  if (recentRendered.some(c => c.text === commentData.text && now - c.time < 3000)) return;
+  recentRendered.push({ text: commentData.text, time: now });
+  if (recentRendered.length > 50) recentRendered.splice(0, 25);
+
   const overlay = getOverlay();
   const el = document.createElement('div');
   el.className = 'niko-comment';
+  if (myPostedComments.has(commentData.text)) {
+    el.classList.add('niko-comment-mine');
+    myPostedComments.delete(commentData.text);
+  }
   el.textContent = commentData.text;
 
   const color = getColorFromMail(commentData.mail);
@@ -91,9 +103,11 @@ function createCommentInput() {
   input.addEventListener('keydown', (e) => {
     e.stopPropagation(); // Netflixのキーボードショートカットを防止
     if (e.key === 'Enter' && input.value.trim()) {
+      const text = input.value.trim();
+      myPostedComments.add(text);
       chrome.runtime.sendMessage({
         type: 'postComment',
-        data: { text: input.value.trim(), isAnonymous: true }
+        data: { text, isAnonymous: true }
       });
       input.value = '';
     }
