@@ -131,6 +131,34 @@
   border-color: rgba(255, 255, 255, 0.4);
 }
 
+#niko-jikkyo-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+#niko-jikkyo-toggle {
+  padding: 8px 12px;
+  border: 2px solid rgba(255, 255, 255, 0.6);
+  border-radius: 20px;
+  background: rgba(40, 40, 40, 0.85);
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 12px;
+  font-family: 'Hiragino Kaku Gothic ProN', sans-serif;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  white-space: nowrap;
+}
+
+#niko-jikkyo-toggle:hover {
+  background: rgba(60, 60, 60, 0.9);
+}
+
+#niko-jikkyo-toggle.active {
+  background: rgba(233, 69, 96, 0.6);
+  border-color: #e94560;
+}
+
 #niko-jikkyo-input {
   width: 400px;
   padding: 10px 16px;

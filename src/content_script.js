@@ -4,6 +4,7 @@
 if (window.__nikoJikkyoLoaded) { /* already loaded */ } else {
 window.__nikoJikkyoLoaded = true;
 
+let commentsHidden = false;
 const LANE_COUNT = 12;
 const FIXED_LANE_COUNT = 8; // 固定コメント用レーン数
 const FIXED_DURATION = 5000; // 固定コメント表示時間(ms)
@@ -284,7 +285,24 @@ function createCommentInput() {
     }
   });
 
-  bar.appendChild(input);
+  const inputRow = document.createElement('div');
+  inputRow.id = 'niko-jikkyo-input-row';
+  inputRow.appendChild(input);
+
+  // コメント非表示トグルボタン
+  const toggleBtn = document.createElement('button');
+  toggleBtn.id = 'niko-jikkyo-toggle';
+  toggleBtn.textContent = '非表示';
+  toggleBtn.addEventListener('click', () => {
+    commentsHidden = !commentsHidden;
+    toggleBtn.textContent = commentsHidden ? '表示' : '非表示';
+    toggleBtn.classList.toggle('active', commentsHidden);
+    const overlay = document.getElementById('niko-jikkyo-overlay');
+    if (overlay) overlay.style.visibility = commentsHidden ? 'hidden' : 'visible';
+  });
+  inputRow.appendChild(toggleBtn);
+  bar.appendChild(inputRow);
+
   document.body.appendChild(bar);
   return bar;
 }
