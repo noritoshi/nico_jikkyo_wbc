@@ -51,7 +51,12 @@ async function fetchWatchData(channelId) {
 
   if (!wsUrl) throw new Error('WebSocket URL not found in embedded data');
 
-  return { wsUrl, broadcastId, title: data.program?.title || channelId };
+  const isPremium = data.user?.accountType === 'premium'
+    || data.user?.isPremium === true
+    || (data.user?.premiumOrigin != null && data.user?.premiumOrigin !== '0' && data.user?.premiumOrigin !== 0);
+  debugLog('[bg] User info:', JSON.stringify(data.user));
+
+  return { wsUrl, broadcastId, title: data.program?.title || channelId, isPremium };
 }
 
 // Netflixタブにcontent_scriptを注入（まだ注入されていない場合）
@@ -88,10 +93,16 @@ async function connect(channelId) {
       data: watchData
     });
 
+    // content_scriptにプレミアム情報を通知
+    for (const port of contentPorts) {
+      try { port.postMessage({ type: 'premiumStatus', isPremium: watchData.isPremium }); } catch (e) {}
+    }
+
     // 接続情報を保存
     await chrome.storage.local.set({
       lastChannel: channelId,
-      programTitle: watchData.title
+      programTitle: watchData.title,
+      isPremium: watchData.isPremium
     });
   } catch (err) {
     console.error('Connection failed:', err);
@@ -209,26 +220,32 @@ async function callGeminiApi(data) {
 - 絵文字は使わない
 - コメント本文のみを返してください（説明不要）`,
 
-    shitaCA: `あなたはニコニコ生放送のコメントアート職人です。
-「下積み」方式でコメントアートを作成してください。
+    shitaCA: `あなたはニコニコ生放送のテキストアート職人です。
+アスキーアート（AA）を作成してください。
 
-下積みの仕組み:
-- 各行が「shita」コマンドで下から上に積み上がる
-- 1行目が最下段、最終行が最上段に表示される
-- 各行は最大75文字（全角）
-- 等幅ではない（MSPゴシック）ので、全角文字・記号で幅を揃える
-- 空白にはU+3000（全角スペース）を使う
-- 最大8行程度が実用的
+ルール:
+- 各行がニコニコのコメントとして1行ずつ投稿される
+- 3〜8行で作成
+- 各行は最大75文字
+- 全角スペースだけの行は禁止。各行に必ず文字や記号を含めること
+- 「shita」等のコマンドは含めない
+- 説明・番号は一切不要
+- 記号（★●▲▼■□◆◇○△▽☆♪♡／＼｜＿）を活用
+
+良い例:
+　　＿＿＿＿＿
+　／　⚾ WBC　＼
+｜　日本優勝！　｜
+　＼＿＿＿＿＿／
+
+悪い例（全角スペースだけの行がある）:
+
+★☆★ 侍ジャパン ★☆★
+
 
 ユーザーの依頼: {userPrompt}
 
-以下の形式で出力してください（各行がshitaコメントとして投稿されます）:
-1行目（最下段）
-2行目
-...
-最終行（最上段）
-
-コメントアートのみを出力し、説明は不要です。`
+テキストアートのみを出力:`
   };
 
   const template = systemPrompts[data.mode] || systemPrompts.normal;
@@ -238,13 +255,16 @@ async function callGeminiApi(data) {
 
   try {
     geminiAbortController = new AbortController();
+    // コメントアートは賢いモデルを使う
+    const model = data.mode === 'shitaCA' ? 'gemini-2.5-flash' : 'gemini-3.1-flash-lite-preview';
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { maxOutputTokens: data.mode === 'shitaCA' ? 8192 : 1024 },
         }),
         signal: geminiAbortController.signal
       }

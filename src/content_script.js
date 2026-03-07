@@ -8,6 +8,8 @@ let commentsHidden = false;
 let aiGeneratedText = '';
 let aiIsEditing = false;
 let aiGenerating = false;
+let isPremiumUser = false;
+const premiumPosBtns = [];
 const LANE_COUNT = 12;
 const FIXED_LANE_COUNT = 8; // 固定コメント用レーン数
 const FIXED_DURATION = 5000; // 固定コメント表示時間(ms)
@@ -195,9 +197,9 @@ function createCommentInput() {
 
   // 位置ボタン
   const positions = [
-    { name: null, label: '流' },
-    { name: 'ue', label: '上' },
-    { name: 'shita', label: '下' },
+    { name: null, label: '流', premium: false },
+    { name: 'ue', label: '上', premium: true },
+    { name: 'shita', label: '下', premium: true },
   ];
   const posGroup = document.createElement('div');
   posGroup.className = 'niko-style-group';
@@ -205,7 +207,13 @@ function createCommentInput() {
     const btn = document.createElement('button');
     btn.className = 'niko-style-btn' + (p.name === null ? ' active' : '');
     btn.textContent = p.label;
+    if (p.premium) {
+      btn.disabled = !isPremiumUser;
+      btn.title = isPremiumUser ? '' : 'プレミアム会員限定';
+      premiumPosBtns.push(btn);
+    }
     btn.addEventListener('click', () => {
+      if (btn.disabled) return;
       commentStyle.position = p.name;
       posGroup.querySelectorAll('.niko-style-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
@@ -264,30 +272,36 @@ function createCommentInput() {
   // Netflixが自動でフォーカスを奪うのを阻止
   let userTyping = false;
   let userClicked = false;
+  let lastFocusedInput = null; // 最後にフォーカスしていたniko入力要素
   document.addEventListener('mousedown', () => { userClicked = true; }, true);
   document.addEventListener('mouseup', () => {
     setTimeout(() => { userClicked = false; }, 100);
   }, true);
-  input.addEventListener('focus', () => { userTyping = true; });
+  // niko入力要素（コメント欄・AI入力欄・AI編集欄）のフォーカスを追跡
+  bar.addEventListener('focusin', (e) => {
+    if (e.target.matches('input, textarea, select')) {
+      userTyping = true;
+      lastFocusedInput = e.target;
+    }
+  });
   // Netflix側の要素がフォーカスを受け取る瞬間に横取り
   document.addEventListener('focusin', (e) => {
     if (!userTyping || userClicked) return;
-    // AIパネル内の要素にフォーカスが移る場合は許可
-    const aiPanel = document.getElementById('niko-jikkyo-ai-panel');
-    if (aiPanel && aiPanel.contains(e.target)) return;
-    if (e.target !== input) {
+    // niko入力バー内の要素なら許可
+    if (bar.contains(e.target)) return;
+    if (lastFocusedInput) {
       e.target.blur();
-      input.focus();
+      lastFocusedInput.focus();
     }
   }, true);
-  input.addEventListener('blur', () => {
+  bar.addEventListener('focusout', (e) => {
     if (userClicked) userTyping = false;
   });
   // Escキーで明示的にフォーカスを外す
-  input.addEventListener('keydown', (e) => {
+  bar.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       userTyping = false;
-      input.blur();
+      if (lastFocusedInput) lastFocusedInput.blur();
     }
   });
 
@@ -327,7 +341,7 @@ function createCommentInput() {
       <label>方式:</label>
       <select id="niko-ai-mode">
         <option value="normal">通常コメント</option>
-        <option value="shitaCA">下積みCA</option>
+        <option value="shitaCA" disabled>下積みコメントアート（プレミアム）</option>
       </select>
     </div>
     <div class="niko-ai-row">
@@ -431,7 +445,7 @@ function createCommentInput() {
     const mode = aiModeSelect.value;
     if (mode === 'shitaCA') {
       // 下積みCA: 各行をshitaコメントとして100ms間隔で連続送信
-      const lines = text.split('\n').filter(l => l.length > 0);
+      const lines = text.split('\n').filter(l => l.replace(/[\s\u3000]/g, '').length > 0).reverse();
       lines.forEach((line, i) => {
         setTimeout(() => {
           myPostedComments.add(line);
@@ -462,9 +476,35 @@ function createCommentInput() {
 
 createCommentInput();
 
+// ストレージからプレミアム情報を復元
+chrome.storage.local.get(['isPremium'], (result) => {
+  if (result.isPremium) {
+    isPremiumUser = true;
+    premiumPosBtns.forEach(btn => { btn.disabled = false; btn.title = ''; });
+    const shitaOption = document.querySelector('#niko-ai-mode option[value="shitaCA"]');
+    if (shitaOption) { shitaOption.disabled = false; shitaOption.textContent = '下積みコメントアート'; }
+  }
+});
+
 // backgroundからのコメント受信（port接続方式）
 const port = chrome.runtime.connect({ name: 'niko-jikkyo' });
 port.onMessage.addListener((msg) => {
+  // プレミアム情報
+  if (msg.type === 'premiumStatus') {
+    isPremiumUser = msg.isPremium;
+    // 位置ボタン（上/下）の有効化
+    premiumPosBtns.forEach(btn => {
+      btn.disabled = !isPremiumUser;
+      btn.title = isPremiumUser ? '' : 'プレミアム会員限定';
+    });
+    // AIパネルの下積みコメントアート
+    const shitaOption = document.querySelector('#niko-ai-mode option[value="shitaCA"]');
+    if (shitaOption) {
+      shitaOption.disabled = !isPremiumUser;
+      shitaOption.textContent = isPremiumUser ? '下積みコメントアート' : '下積みコメントアート（プレミアム）';
+    }
+    return;
+  }
   // 投稿結果
   if (msg.type === 'postCommentResult') {
     if (msg.data.error) {
@@ -504,11 +544,19 @@ port.onMessage.addListener((msg) => {
       return;
     }
 
-    // プレビューに表示
+    // プレビューに表示（空白のみの行を除去）
     if (preview && previewArea && status) {
-      aiGeneratedText = msg.data.text;
+      const cleaned = msg.data.text.split('\n')
+        .filter(line => line.replace(/[\s\u3000]/g, '').length > 0)
+        .join('\n');
+      if (!cleaned) {
+        status.textContent = '生成に失敗しました。もう一度お試しください。';
+        status.style.color = '#ff4444';
+        return;
+      }
+      aiGeneratedText = cleaned;
       aiIsEditing = false;
-      preview.textContent = msg.data.text;
+      preview.textContent = cleaned;
       preview.style.display = 'block';
       if (editArea) editArea.style.display = 'none';
       if (editBtn) editBtn.textContent = '編集';

@@ -125,6 +125,11 @@
   color: #fff;
 }
 
+.niko-style-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
 .niko-style-btn.active {
   background: rgba(255, 255, 255, 0.2);
   color: #fff;
@@ -319,6 +324,7 @@
   margin: 0;
   max-height: 200px;
   overflow-y: auto;
+  text-align: center;
 }
 
 #niko-ai-edit {
