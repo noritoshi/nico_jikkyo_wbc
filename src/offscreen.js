@@ -481,6 +481,10 @@ function extractComment(msgBuf) {
         const colorNames = ['', 'red', 'pink', 'orange', 'yellow', 'green', 'cyan', 'blue', 'purple', 'black'];
         if (colorNames[colorVal]) parts.push(colorNames[colorVal]);
 
+        // f6: opacity (0=normal, 1=translucent)
+        const opacityVal = mod[6]?.[0]?.type === 'varint' ? mod[6][0].value : 0;
+        if (opacityVal === 1) parts.push('translucent');
+
         mail = parts.join(' ');
         if (mail) log('[comment] modifier:', mail);
       }

@@ -107,14 +107,38 @@ frame.f2 (wrapper) → wrapper.f1 (inner protobuf) → Chat message
 | f7 | `modifier` | Modifier | 色・サイズ・位置の装飾情報 |
 | f8 | `no` | int32 | コメント番号（番組内連番） |
 
-### Modifier (f7) の内容
+### Modifier (f7) の内容（公式Protobufスキーマより）
 
-テキストの装飾を指定:
-- 位置: 上(ue) / 中(naka) / 下(shita)
-- サイズ: big / medium / small
-- 色: 名前指定(red, blue等) または RGB値
-- フォント
-- 透明度
+全てenum（varint）。デフォルト値(0)はprotobufでフィールド省略される。
+
+```protobuf
+message Modifier {
+  enum Pos { naka = 0; shita = 1; ue = 2; }
+  Pos position = 1;
+
+  enum Size { medium = 0; small = 1; big = 2; }
+  Size size = 2;
+
+  enum ColorName {
+    white = 0; red = 1; pink = 2; orange = 3; yellow = 4;
+    green = 5; cyan = 6; blue = 7; purple = 8; black = 9;
+    white2 = 10; red2 = 11; pink2 = 12; orange2 = 13; yellow2 = 14;
+    green2 = 15; cyan2 = 16; blue2 = 17; purple2 = 18; black2 = 19;
+  }
+  message FullColor { int32 r = 1; int32 g = 2; int32 b = 3; }
+  oneof color { ColorName named_color = 3; FullColor full_color = 4; }
+
+  enum Font { defont = 0; mincho = 1; gothic = 2; }
+  Font font = 5;
+
+  enum Opacity { Normal = 0; Translucent = 1; }
+  Opacity opacity = 6;
+}
+```
+
+- `*2`系の色はプレミアム会員専用カラー
+- `Translucent`: 連投制限やrestricted判定のコメントに適用される半透明表示
+- 固定コメント(ue/shita)は本家では同位置に重ならないよう縦にスタックされる
 
 ### AccountStatus (f4) の値
 
@@ -182,6 +206,7 @@ vposの基準時刻（ISO 8601形式）。
 | `isAnonymous` | boolean | 省略可 | 184（匿名）。省略時はID公開 |
 | `color` | string | 省略可 | 色名（red, blue, green等） |
 | `size` | string | 省略可 | サイズ（big, medium, small） |
+| `position` | string | 省略可 | 位置（ue, shita） |
 
 ### 投稿レスポンス
 
@@ -225,6 +250,20 @@ vposの基準時刻（ISO 8601形式）。
 - スクレイピング・リバースエンジニアリングの明示的禁止もない
 - 禁止事項: サーバー過負荷、運営妨害（一般的）
 - 本拡張のポーリングはサーバー主導のロングポーリング（~30秒間隔）で負荷は最小限
+
+## コメント重複表示の問題
+
+- 同一コメントがmpnセグメント境界で2つのセグメントに重複して配信される場合がある
+- コメント番号(f8)での重複排除は不完全（f8が取得できない場合がある）
+- **クライアント側で同一テキスト+3秒以内の重複排除が有効**
+- 日本語コメントで重複しやすく、ASCII-onlyでは重複しにくい傾向あり（原因不明）
+
+## Netflix上のフォーカス管理
+
+- Netflixプレーヤーはコントロール非表示時にJS経由でフォーカスを動画要素に移動させる
+- コメント入力中にフォーカスが奪われるとIME変換が強制確定される（ブラウザ仕様）
+- `focusin`イベントキャプチャで横取りする方式で対処可能だが、一瞬のフォーカス喪失は残る
+- `HTMLElement.prototype.focus`上書きはcontent_scriptのisolated worldから動作しない
 
 ## Chrome拡張の公開に関する知見
 

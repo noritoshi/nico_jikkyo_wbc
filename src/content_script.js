@@ -5,10 +5,14 @@ if (window.__nikoJikkyoLoaded) { /* already loaded */ } else {
 window.__nikoJikkyoLoaded = true;
 
 const LANE_COUNT = 12;
+const FIXED_LANE_COUNT = 8; // 固定コメント用レーン数
+const FIXED_DURATION = 5000; // 固定コメント表示時間(ms)
 const myPostedComments = new Set(); // 自分が投稿したコメントテキスト
 const recentRendered = []; // 表示済みコメント（重複排除用）
 const COMMENT_DURATION = 7000; // ms
 const lanes = new Array(LANE_COUNT).fill(0); // 各レーンの解放時刻
+const ueLanes = new Array(FIXED_LANE_COUNT).fill(0); // 上固定レーン解放時刻
+const shitaLanes = new Array(FIXED_LANE_COUNT).fill(0); // 下固定レーン解放時刻
 
 function getOverlay() {
   let overlay = document.getElementById('niko-jikkyo-overlay');
@@ -94,20 +98,40 @@ function renderComment(commentData) {
   if (size === 'big') el.style.fontSize = '44px';
   else if (size === 'small') el.style.fontSize = '20px';
 
+  if (mail.includes('translucent')) el.style.opacity = '0.5';
+
   const position = getPositionFromMail(mail);
 
   if (position === 'ue' || position === 'shita') {
-    // 上固定・下固定コメント
+    // 上固定・下固定コメント（レーン管理で重ならないようにする）
     el.classList.add('niko-comment-fixed');
+    const fixedLanes = position === 'ue' ? ueLanes : shitaLanes;
+    const now = Date.now();
+    let slot = -1;
+    for (let i = 0; i < FIXED_LANE_COUNT; i++) {
+      if (fixedLanes[i] <= now) { slot = i; break; }
+    }
+    if (slot === -1) {
+      // 全スロット使用中 → 最も古いスロットを上書き
+      let oldest = 0;
+      for (let i = 1; i < FIXED_LANE_COUNT; i++) {
+        if (fixedLanes[i] < fixedLanes[oldest]) oldest = i;
+      }
+      slot = oldest;
+    }
+    fixedLanes[slot] = now + FIXED_DURATION;
+
+    const fontSize = size === 'big' ? 44 : size === 'small' ? 20 : 32;
+    const lineHeight = fontSize * 1.3;
     if (position === 'ue') {
-      el.style.top = '5%';
+      el.style.top = (5 + slot * lineHeight / window.innerHeight * 100) + '%';
     } else {
-      el.style.bottom = '15%';
+      el.style.bottom = (20 + slot * lineHeight / window.innerHeight * 100) + '%';
       el.style.top = 'auto';
     }
     el.style.left = '50%';
     el.style.transform = 'translateX(-50%)';
-    el.style.animation = 'niko-fade 5s linear forwards';
+    el.style.animation = `niko-fade ${FIXED_DURATION}ms linear forwards`;
     overlay.appendChild(el);
     el.addEventListener('animationend', () => el.remove());
   } else {
@@ -232,6 +256,33 @@ function createCommentInput() {
 
   input.addEventListener('keyup', (e) => e.stopPropagation());
   input.addEventListener('keypress', (e) => e.stopPropagation());
+
+  // Netflixが自動でフォーカスを奪うのを阻止
+  let userTyping = false;
+  let userClicked = false;
+  document.addEventListener('mousedown', () => { userClicked = true; }, true);
+  document.addEventListener('mouseup', () => {
+    setTimeout(() => { userClicked = false; }, 100);
+  }, true);
+  input.addEventListener('focus', () => { userTyping = true; });
+  // Netflix側の要素がフォーカスを受け取る瞬間に横取り
+  document.addEventListener('focusin', (e) => {
+    if (!userTyping || userClicked) return;
+    if (e.target !== input) {
+      e.target.blur();
+      input.focus();
+    }
+  }, true);
+  input.addEventListener('blur', () => {
+    if (userClicked) userTyping = false;
+  });
+  // Escキーで明示的にフォーカスを外す
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      userTyping = false;
+      input.blur();
+    }
+  });
 
   bar.appendChild(input);
   document.body.appendChild(bar);
