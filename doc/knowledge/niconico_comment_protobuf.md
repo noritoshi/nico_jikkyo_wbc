@@ -151,9 +151,63 @@ vposの基準時刻（ISO 8601形式）。
 
 ## 認証
 
-- ニコニコ生放送へのログインは**不要**
-- 未ログイン状態（シークレットモードなど）でもコメント取得可能
+- コメント**閲覧**はログイン**不要**（シークレットモードでも可）
+- コメント**投稿**はログイン**必要**（Cookieベースのセッション認証）
 - embedded_dataのWebSocket URL内のaudience_tokenはセッション不要で取得できる
+- ログイン済みCookieで`fetchWatchData`すると認証済みWebSocket URLが得られ、投稿可能になる
+
+## コメント投稿API
+
+既に接続中のWebSocketに JSON メッセージを送信する方式。
+
+### 投稿リクエスト
+
+```json
+{
+  "type": "postComment",
+  "data": {
+    "text": "コメント本文",
+    "vpos": 857670,
+    "isAnonymous": true,
+    "color": "red",
+    "size": "small"
+  }
+}
+```
+
+| フィールド | 型 | 必須 | 説明 |
+|---|---|---|---|
+| `text` | string | 必須 | コメント本文 |
+| `vpos` | int32 | 必須 | 再生位置（1/100秒単位）。`(現在時刻 - vposBaseTime) * 100` で計算 |
+| `isAnonymous` | boolean | 省略可 | 184（匿名）。省略時はID公開 |
+| `color` | string | 省略可 | 色名（red, blue, green等） |
+| `size` | string | 省略可 | サイズ（big, medium, small） |
+
+### 投稿レスポンス
+
+```json
+{
+  "type": "postCommentResult",
+  "data": {
+    "chat": {
+      "content": "コメント本文",
+      "mail": "red small",
+      "anonymity": 0,
+      "restricted": false,
+      "modifier": {
+        "position": null,
+        "size": "small",
+        "color": "red",
+        "font": null,
+        "opacity": "normal"
+      }
+    }
+  }
+}
+```
+
+- `postCommentResult` が返れば投稿成功（ログイン済み）
+- エラーが返れば未ログインまたは投稿制限
 
 ## 特許に関する注意
 
