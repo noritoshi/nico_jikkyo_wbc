@@ -56,6 +56,20 @@ function getColorFromMail(mail) {
   return null;
 }
 
+function getPositionFromMail(mail) {
+  if (!mail) return null;
+  if (mail.includes('ue')) return 'ue';
+  if (mail.includes('shita')) return 'shita';
+  return null;
+}
+
+function getSizeFromMail(mail) {
+  if (!mail) return null;
+  if (mail.includes('big')) return 'big';
+  if (mail.includes('small')) return 'small';
+  return null;
+}
+
 function renderComment(commentData) {
   // 3秒以内の同一テキストは重複として無視
   const now = Date.now();
@@ -72,19 +86,44 @@ function renderComment(commentData) {
   }
   el.textContent = commentData.text;
 
-  const color = getColorFromMail(commentData.mail);
+  const mail = commentData.mail || '';
+  const color = getColorFromMail(mail);
   if (color) el.style.color = color;
 
-  const lane = findAvailableLane();
-  const topPercent = (lane / LANE_COUNT) * 80 + 5;
-  el.style.top = topPercent + '%';
-  el.style.left = '100%';
+  const size = getSizeFromMail(mail);
+  if (size === 'big') el.style.fontSize = '44px';
+  else if (size === 'small') el.style.fontSize = '20px';
 
-  lanes[lane] = Date.now() + COMMENT_DURATION * 0.4;
+  const position = getPositionFromMail(mail);
 
-  overlay.appendChild(el);
-  el.addEventListener('animationend', () => el.remove());
+  if (position === 'ue' || position === 'shita') {
+    // 上固定・下固定コメント
+    el.classList.add('niko-comment-fixed');
+    if (position === 'ue') {
+      el.style.top = '5%';
+    } else {
+      el.style.bottom = '15%';
+      el.style.top = 'auto';
+    }
+    el.style.left = '50%';
+    el.style.transform = 'translateX(-50%)';
+    el.style.animation = 'niko-fade 5s linear forwards';
+    overlay.appendChild(el);
+    el.addEventListener('animationend', () => el.remove());
+  } else {
+    // 通常の流れるコメント
+    const lane = findAvailableLane();
+    const topPercent = (lane / LANE_COUNT) * 80 + 5;
+    el.style.top = topPercent + '%';
+    el.style.left = '100%';
+    lanes[lane] = Date.now() + COMMENT_DURATION * 0.4;
+    overlay.appendChild(el);
+    el.addEventListener('animationend', () => el.remove());
+  }
 }
+
+// 現在の装飾設定
+const commentStyle = { color: null, position: null, size: null };
 
 // コメント入力欄の作成
 function createCommentInput() {
@@ -94,6 +133,83 @@ function createCommentInput() {
   bar = document.createElement('div');
   bar.id = 'niko-jikkyo-input-bar';
 
+  // 装飾バー
+  const styleBar = document.createElement('div');
+  styleBar.id = 'niko-jikkyo-style-bar';
+
+  // 色ボタン
+  const colors = [
+    { name: null, label: '白', hex: '#ffffff' },
+    { name: 'red', label: '赤', hex: '#ff0000' },
+    { name: 'pink', label: '桃', hex: '#ff8080' },
+    { name: 'orange', label: '橙', hex: '#ffc000' },
+    { name: 'yellow', label: '黄', hex: '#ffff00' },
+    { name: 'green', label: '緑', hex: '#00ff00' },
+    { name: 'cyan', label: '水', hex: '#00ffff' },
+    { name: 'blue', label: '青', hex: '#0000ff' },
+    { name: 'purple', label: '紫', hex: '#c000ff' },
+  ];
+  const colorGroup = document.createElement('div');
+  colorGroup.className = 'niko-style-group';
+  for (const c of colors) {
+    const btn = document.createElement('button');
+    btn.className = 'niko-color-btn' + (c.name === null ? ' active' : '');
+    btn.style.background = c.hex;
+    btn.title = c.label;
+    btn.addEventListener('click', () => {
+      commentStyle.color = c.name;
+      colorGroup.querySelectorAll('.niko-color-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+    colorGroup.appendChild(btn);
+  }
+  styleBar.appendChild(colorGroup);
+
+  // 位置ボタン
+  const positions = [
+    { name: null, label: '流' },
+    { name: 'ue', label: '上' },
+    { name: 'shita', label: '下' },
+  ];
+  const posGroup = document.createElement('div');
+  posGroup.className = 'niko-style-group';
+  for (const p of positions) {
+    const btn = document.createElement('button');
+    btn.className = 'niko-style-btn' + (p.name === null ? ' active' : '');
+    btn.textContent = p.label;
+    btn.addEventListener('click', () => {
+      commentStyle.position = p.name;
+      posGroup.querySelectorAll('.niko-style-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+    posGroup.appendChild(btn);
+  }
+  styleBar.appendChild(posGroup);
+
+  // サイズボタン
+  const sizes = [
+    { name: null, label: '中' },
+    { name: 'big', label: '大' },
+    { name: 'small', label: '小' },
+  ];
+  const sizeGroup = document.createElement('div');
+  sizeGroup.className = 'niko-style-group';
+  for (const s of sizes) {
+    const btn = document.createElement('button');
+    btn.className = 'niko-style-btn' + (s.name === null ? ' active' : '');
+    btn.textContent = s.label;
+    btn.addEventListener('click', () => {
+      commentStyle.size = s.name;
+      sizeGroup.querySelectorAll('.niko-style-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+    sizeGroup.appendChild(btn);
+  }
+  styleBar.appendChild(sizeGroup);
+
+  bar.appendChild(styleBar);
+
+  // テキスト入力
   const input = document.createElement('input');
   input.type = 'text';
   input.id = 'niko-jikkyo-input';
@@ -101,19 +217,19 @@ function createCommentInput() {
   input.maxLength = 75;
 
   input.addEventListener('keydown', (e) => {
-    e.stopPropagation(); // Netflixのキーボードショートカットを防止
-    if (e.key === 'Enter' && input.value.trim()) {
+    e.stopPropagation();
+    if (e.key === 'Enter' && !e.isComposing && input.value.trim()) {
       const text = input.value.trim();
       myPostedComments.add(text);
-      chrome.runtime.sendMessage({
-        type: 'postComment',
-        data: { text, isAnonymous: true }
-      });
+      const data = { text, isAnonymous: true };
+      if (commentStyle.color) data.color = commentStyle.color;
+      if (commentStyle.size) data.size = commentStyle.size;
+      if (commentStyle.position) data.position = commentStyle.position;
+      chrome.runtime.sendMessage({ type: 'postComment', data });
       input.value = '';
     }
   });
 
-  // フォーカス中のキー入力がNetflixに伝播しないようにする
   input.addEventListener('keyup', (e) => e.stopPropagation());
   input.addEventListener('keypress', (e) => e.stopPropagation());
 

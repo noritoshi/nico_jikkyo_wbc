@@ -34,6 +34,17 @@
   }
 }
 
+.niko-comment-fixed {
+  animation: niko-fade 5s linear forwards !important;
+  text-align: center;
+}
+
+@keyframes niko-fade {
+  0% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
 .niko-comment-mine {
   border: 2px solid #ffcc00;
   border-radius: 4px;
@@ -47,13 +58,77 @@
   transform: translateX(-50%);
   z-index: 2147483647;
   pointer-events: auto;
-  opacity: 0.5;
+  opacity: 0.3;
   transition: opacity 0.3s;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
 }
 
 #niko-jikkyo-input-bar:hover,
 #niko-jikkyo-input-bar:focus-within {
   opacity: 1;
+}
+
+#niko-jikkyo-style-bar {
+  display: none;
+  gap: 8px;
+  align-items: center;
+}
+
+#niko-jikkyo-input-bar:focus-within #niko-jikkyo-style-bar {
+  display: flex;
+}
+
+.niko-style-group {
+  display: flex;
+  gap: 2px;
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 12px;
+  padding: 3px;
+  backdrop-filter: blur(8px);
+}
+
+.niko-color-btn {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+  transition: border-color 0.2s;
+}
+
+.niko-color-btn:hover {
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+.niko-color-btn.active {
+  border-color: #fff;
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.5);
+}
+
+.niko-style-btn {
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 12px;
+  cursor: pointer;
+  font-family: 'Hiragino Kaku Gothic ProN', sans-serif;
+  transition: all 0.2s;
+}
+
+.niko-style-btn:hover {
+  color: #fff;
+}
+
+.niko-style-btn.active {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.4);
 }
 
 #niko-jikkyo-input {

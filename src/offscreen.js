@@ -421,7 +421,7 @@ async function fetchSegment(uri) {
       for (const frame of messages) {
         const c = extractComment(frame);
         if (c) {
-          emitComment(c.text, c.no, 0);
+          emitComment(c.text, c.no, c.mail);
           commentCount++;
         }
       }
@@ -459,7 +459,32 @@ function extractComment(msgBuf) {
       const text = bytesToString(textField.data);
       const vpos = commentFields[3]?.[0]?.type === 'varint' ? commentFields[3][0].value : 0;
       const no = commentFields[8]?.[0]?.type === 'varint' ? commentFields[8][0].value : null;
-      return { text, vpos, no };
+
+      // modifier (f7): 装飾情報を解析（全てenum=varint）
+      let mail = '';
+      if (commentFields[7]?.[0]?.type === 'bytes') {
+        const mod = decodeProtobuf(commentFields[7][0].data);
+        const parts = [];
+
+        // f1: position (0=naka, 1=shita, 2=ue)
+        const posVal = mod[1]?.[0]?.type === 'varint' ? mod[1][0].value : 0;
+        const posNames = ['', 'shita', 'ue'];
+        if (posNames[posVal]) parts.push(posNames[posVal]);
+
+        // f2: size (0=medium, 1=small, 2=big)
+        const sizeVal = mod[2]?.[0]?.type === 'varint' ? mod[2][0].value : 0;
+        const sizeNames = ['', 'small', 'big'];
+        if (sizeNames[sizeVal]) parts.push(sizeNames[sizeVal]);
+
+        // f3: named_color (0=white, 1=red, 2=pink, 3=orange, 4=yellow, 5=green, 6=cyan, 7=blue, 8=purple, 9=black)
+        const colorVal = mod[3]?.[0]?.type === 'varint' ? mod[3][0].value : 0;
+        const colorNames = ['', 'red', 'pink', 'orange', 'yellow', 'green', 'cyan', 'blue', 'purple', 'black'];
+        if (colorNames[colorVal]) parts.push(colorNames[colorVal]);
+
+        mail = parts.join(' ');
+        if (mail) log('[comment] modifier:', mail);
+      }
+      return { text, vpos, no, mail };
     } catch (e) {}
   }
   return null;
@@ -482,7 +507,7 @@ function isLikelyComment(text) {
 
 const seenCommentNos = new Set(); // コメント番号による重複排除
 
-function emitComment(text, commentNo, delayMs = 0) {
+function emitComment(text, commentNo, mail = '') {
   if (!isLikelyComment(text)) return;
 
   // コメント番号で重複排除
@@ -492,21 +517,17 @@ function emitComment(text, commentNo, delayMs = 0) {
   }
   if (commentNo) {
     seenCommentNos.add(commentNo);
-    // メモリ管理: 古いエントリを削除
     if (seenCommentNos.size > 1000) {
-      const iter = seenCommentNos.values();
-      for (let i = 0; i < 500; i++) iter.next();
-      // 先頭500個を削除
       const arr = Array.from(seenCommentNos);
       seenCommentNos.clear();
       for (let i = 500; i < arr.length; i++) seenCommentNos.add(arr[i]);
     }
   }
 
-  log('[comment]', text.substring(0, 50), 'no=' + commentNo);
+  log('[comment]', text.substring(0, 50), 'no=' + commentNo, 'mail=' + mail);
   chrome.runtime.sendMessage({
     type: 'comment',
-    data: { text, mail: '', user_id: '', delay: delayMs }
+    data: { text, mail }
   });
 }
 
@@ -531,6 +552,7 @@ function postComment(data) {
   };
   if (data.color) msg.data.color = data.color;
   if (data.size) msg.data.size = data.size;
+  if (data.position) msg.data.position = data.position;
 
   log('[post] Sending:', JSON.stringify(msg));
   watchWs.send(JSON.stringify(msg));
