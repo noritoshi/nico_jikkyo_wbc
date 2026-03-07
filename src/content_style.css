@@ -186,3 +186,210 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* AIボタン */
+#niko-jikkyo-ai-btn {
+  padding: 8px 12px;
+  border: 2px solid rgba(233, 69, 96, 0.6);
+  border-radius: 20px;
+  background: rgba(40, 40, 40, 0.85);
+  color: #e94560;
+  font-size: 12px;
+  font-weight: bold;
+  font-family: 'Hiragino Kaku Gothic ProN', sans-serif;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  white-space: nowrap;
+}
+
+#niko-jikkyo-ai-btn:hover {
+  background: rgba(233, 69, 96, 0.2);
+}
+
+/* AIパネル */
+#niko-jikkyo-ai-panel {
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  width: 450px;
+  padding: 12px;
+  background: rgba(30, 30, 50, 0.95);
+  border: 1px solid rgba(233, 69, 96, 0.4);
+  border-radius: 12px;
+  backdrop-filter: blur(12px);
+}
+
+#niko-jikkyo-ai-panel.open {
+  display: flex;
+}
+
+.niko-ai-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.niko-ai-row label {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 13px;
+  white-space: nowrap;
+  font-family: 'Hiragino Kaku Gothic ProN', sans-serif;
+}
+
+.niko-ai-row select {
+  flex: 1;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 8px;
+  background: rgba(20, 20, 40, 0.9);
+  color: #eee;
+  font-size: 13px;
+  font-family: 'Hiragino Kaku Gothic ProN', sans-serif;
+  outline: none;
+}
+
+.niko-ai-row input[type="text"] {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 8px;
+  background: rgba(20, 20, 40, 0.9);
+  color: #fff;
+  font-size: 13px;
+  font-family: 'Hiragino Kaku Gothic ProN', sans-serif;
+  outline: none;
+}
+
+.niko-ai-row input[type="text"]:focus {
+  border-color: #e94560;
+}
+
+.niko-ai-row input[type="text"]::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+#niko-ai-generate {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 8px;
+  background: #e94560;
+  color: #fff;
+  font-size: 13px;
+  font-weight: bold;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: 'Hiragino Kaku Gothic ProN', sans-serif;
+}
+
+#niko-ai-generate:hover {
+  background: #c73e54;
+}
+
+#niko-ai-generate:disabled {
+  background: #555;
+  cursor: not-allowed;
+}
+
+#niko-ai-generate.niko-ai-cancel {
+  background: #666;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+#niko-ai-generate.niko-ai-cancel:hover {
+  background: #888;
+}
+
+.niko-ai-label {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+  margin-bottom: 4px;
+  font-family: 'Hiragino Kaku Gothic ProN', sans-serif;
+}
+
+#niko-ai-preview {
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  padding: 10px;
+  color: #fff;
+  font-size: 14px;
+  font-family: 'MS PGothic', 'Hiragino Kaku Gothic ProN', sans-serif;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+#niko-ai-edit {
+  width: 100%;
+  min-height: 80px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid #e94560;
+  border-radius: 8px;
+  padding: 10px;
+  color: #fff;
+  font-size: 14px;
+  font-family: 'MS PGothic', 'Hiragino Kaku Gothic ProN', sans-serif;
+  resize: vertical;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.niko-ai-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.niko-ai-actions button {
+  padding: 6px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #eee;
+  font-size: 13px;
+  cursor: pointer;
+  font-family: 'Hiragino Kaku Gothic ProN', sans-serif;
+}
+
+.niko-ai-actions button:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+#niko-ai-post-btn {
+  background: #e94560 !important;
+  border-color: #e94560 !important;
+  font-weight: bold;
+}
+
+#niko-ai-post-btn:hover {
+  background: #c73e54 !important;
+}
+
+#niko-ai-status {
+  font-size: 12px;
+  text-align: center;
+  min-height: 16px;
+  max-height: 60px;
+  overflow-y: auto;
+  word-break: break-all;
+  font-family: 'Hiragino Kaku Gothic ProN', sans-serif;
+}
+
+.niko-ai-loading {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 204, 0, 0.3);
+  border-top-color: #ffcc00;
+  border-radius: 50%;
+  animation: niko-spin 0.8s linear infinite;
+  vertical-align: middle;
+  margin-right: 4px;
+}
+
+@keyframes niko-spin {
+  to { transform: rotate(360deg); }
+}

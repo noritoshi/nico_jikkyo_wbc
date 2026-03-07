@@ -5,6 +5,9 @@ if (window.__nikoJikkyoLoaded) { /* already loaded */ } else {
 window.__nikoJikkyoLoaded = true;
 
 let commentsHidden = false;
+let aiGeneratedText = '';
+let aiIsEditing = false;
+let aiGenerating = false;
 const LANE_COUNT = 12;
 const FIXED_LANE_COUNT = 8; // 固定コメント用レーン数
 const FIXED_DURATION = 5000; // 固定コメント表示時間(ms)
@@ -269,6 +272,9 @@ function createCommentInput() {
   // Netflix側の要素がフォーカスを受け取る瞬間に横取り
   document.addEventListener('focusin', (e) => {
     if (!userTyping || userClicked) return;
+    // AIパネル内の要素にフォーカスが移る場合は許可
+    const aiPanel = document.getElementById('niko-jikkyo-ai-panel');
+    if (aiPanel && aiPanel.contains(e.target)) return;
     if (e.target !== input) {
       e.target.blur();
       input.focus();
@@ -289,6 +295,16 @@ function createCommentInput() {
   inputRow.id = 'niko-jikkyo-input-row';
   inputRow.appendChild(input);
 
+  // AIボタン
+  const aiBtn = document.createElement('button');
+  aiBtn.id = 'niko-jikkyo-ai-btn';
+  aiBtn.textContent = 'AI';
+  aiBtn.addEventListener('click', () => {
+    const panel = document.getElementById('niko-jikkyo-ai-panel');
+    if (panel) panel.classList.toggle('open');
+  });
+  inputRow.appendChild(aiBtn);
+
   // コメント非表示トグルボタン
   const toggleBtn = document.createElement('button');
   toggleBtn.id = 'niko-jikkyo-toggle';
@@ -302,6 +318,143 @@ function createCommentInput() {
   });
   inputRow.appendChild(toggleBtn);
   bar.appendChild(inputRow);
+
+  // AIパネル
+  const aiPanel = document.createElement('div');
+  aiPanel.id = 'niko-jikkyo-ai-panel';
+  aiPanel.innerHTML = `
+    <div class="niko-ai-row">
+      <label>方式:</label>
+      <select id="niko-ai-mode">
+        <option value="normal">通常コメント</option>
+        <option value="shitaCA">下積みCA</option>
+      </select>
+    </div>
+    <div class="niko-ai-row">
+      <input type="text" id="niko-ai-prompt" placeholder="依頼を入力（例: 野球のAAを作って）" maxlength="200">
+      <button id="niko-ai-generate">生成</button>
+    </div>
+    <div id="niko-ai-preview-area" style="display:none;">
+      <div class="niko-ai-label">プレビュー</div>
+      <pre id="niko-ai-preview"></pre>
+      <textarea id="niko-ai-edit" style="display:none;"></textarea>
+      <div class="niko-ai-actions">
+        <button id="niko-ai-edit-btn">編集</button>
+        <button id="niko-ai-post-btn">投稿</button>
+      </div>
+    </div>
+    <div id="niko-ai-status"></div>
+  `;
+  bar.appendChild(aiPanel);
+
+  // AIパネルのイベント
+  const aiPromptInput = aiPanel.querySelector('#niko-ai-prompt');
+  const aiGenerateBtn = aiPanel.querySelector('#niko-ai-generate');
+  const aiPreviewArea = aiPanel.querySelector('#niko-ai-preview-area');
+  const aiPreview = aiPanel.querySelector('#niko-ai-preview');
+  const aiEditArea = aiPanel.querySelector('#niko-ai-edit');
+  const aiEditBtn = aiPanel.querySelector('#niko-ai-edit-btn');
+  const aiPostBtn = aiPanel.querySelector('#niko-ai-post-btn');
+  const aiModeSelect = aiPanel.querySelector('#niko-ai-mode');
+  const aiStatus = aiPanel.querySelector('#niko-ai-status');
+
+  // AIパネル内のキーイベントがNetflixに伝播しないようにする
+  aiPanel.addEventListener('keydown', (e) => e.stopPropagation());
+  aiPanel.addEventListener('keyup', (e) => e.stopPropagation());
+  aiPanel.addEventListener('keypress', (e) => e.stopPropagation());
+
+  aiGenerateBtn.addEventListener('click', () => {
+    // キャンセル処理
+    if (aiGenerating) {
+      chrome.runtime.sendMessage({ type: 'cancelAiComment' });
+      aiGenerating = false;
+      aiGenerateBtn.textContent = '生成';
+      aiGenerateBtn.classList.remove('niko-ai-cancel');
+      aiStatus.textContent = 'キャンセルしました';
+      aiStatus.style.color = '#888';
+      setTimeout(() => { aiStatus.textContent = ''; }, 2000);
+      return;
+    }
+
+    const userPrompt = aiPromptInput.value.trim();
+    if (!userPrompt) return;
+
+    aiGenerating = true;
+    aiStatus.innerHTML = '<span class="niko-ai-loading"></span> AIが思考中...';
+    aiStatus.style.color = '#ffcc00';
+    aiGenerateBtn.textContent = 'キャンセル';
+    aiGenerateBtn.classList.add('niko-ai-cancel');
+    aiPreviewArea.style.display = 'none';
+
+    // 直近コメントを収集（表示済みから最新20件）
+    const recentTexts = recentRendered.slice(-20).map(c => c.text).join('\n');
+
+    chrome.runtime.sendMessage({
+      type: 'generateAiComment',
+      data: {
+        mode: aiModeSelect.value,
+        userPrompt: userPrompt,
+        recentComments: recentTexts
+      }
+    });
+  });
+
+  // Enter で生成
+  aiPromptInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.isComposing) {
+      aiGenerateBtn.click();
+    }
+  });
+
+  // 編集ボタン
+  aiEditBtn.addEventListener('click', () => {
+    aiIsEditing = !aiIsEditing;
+    if (aiIsEditing) {
+      aiEditArea.value = aiGeneratedText;
+      aiEditArea.style.display = 'block';
+      aiPreview.style.display = 'none';
+      aiEditBtn.textContent = 'プレビュー';
+    } else {
+      aiGeneratedText = aiEditArea.value;
+      aiPreview.textContent = aiGeneratedText;
+      aiEditArea.style.display = 'none';
+      aiPreview.style.display = 'block';
+      aiEditBtn.textContent = '編集';
+    }
+  });
+
+  // 投稿ボタン
+  aiPostBtn.addEventListener('click', () => {
+    const text = aiIsEditing ? aiEditArea.value.trim() : aiGeneratedText;
+    if (!text) return;
+
+    const mode = aiModeSelect.value;
+    if (mode === 'shitaCA') {
+      // 下積みCA: 各行をshitaコメントとして100ms間隔で連続送信
+      const lines = text.split('\n').filter(l => l.length > 0);
+      lines.forEach((line, i) => {
+        setTimeout(() => {
+          myPostedComments.add(line);
+          chrome.runtime.sendMessage({
+            type: 'postComment',
+            data: { text: line, isAnonymous: true, position: 'shita' }
+          });
+        }, i * 100);
+      });
+      aiStatus.textContent = `${lines.length}行を投稿しました`;
+      aiStatus.style.color = '#00ff66';
+    } else {
+      // 通常コメント
+      myPostedComments.add(text);
+      chrome.runtime.sendMessage({
+        type: 'postComment',
+        data: { text, isAnonymous: true }
+      });
+      aiStatus.textContent = '投稿しました';
+      aiStatus.style.color = '#00ff66';
+    }
+    setTimeout(() => { aiStatus.textContent = ''; }, 3000);
+  });
 
   document.body.appendChild(bar);
   return bar;
@@ -324,6 +477,43 @@ port.onMessage.addListener((msg) => {
           input.disabled = false;
         }, 3000);
       }
+    }
+    return;
+  }
+  // AI生成結果
+  if (msg.type === 'aiCommentResult') {
+    const generateBtn = document.getElementById('niko-ai-generate');
+    const previewArea = document.getElementById('niko-ai-preview-area');
+    const preview = document.getElementById('niko-ai-preview');
+    const editArea = document.getElementById('niko-ai-edit');
+    const editBtn = document.getElementById('niko-ai-edit-btn');
+    const status = document.getElementById('niko-ai-status');
+    aiGenerating = false;
+    if (generateBtn) {
+      generateBtn.textContent = '生成';
+      generateBtn.classList.remove('niko-ai-cancel');
+    }
+
+    if (msg.data.cancelled) return;
+
+    if (msg.data.error) {
+      if (status) {
+        status.textContent = msg.data.error;
+        status.style.color = '#ff4444';
+      }
+      return;
+    }
+
+    // プレビューに表示
+    if (preview && previewArea && status) {
+      aiGeneratedText = msg.data.text;
+      aiIsEditing = false;
+      preview.textContent = msg.data.text;
+      preview.style.display = 'block';
+      if (editArea) editArea.style.display = 'none';
+      if (editBtn) editBtn.textContent = '編集';
+      previewArea.style.display = 'block';
+      status.textContent = '';
     }
     return;
   }

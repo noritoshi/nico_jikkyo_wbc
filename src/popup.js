@@ -61,3 +61,30 @@ chrome.runtime.onMessage.addListener((msg) => {
     updateUI(msg.data.status, msg.data.error);
   }
 });
+
+// Gemini API Key
+const apiKeyInput = document.getElementById('gemini-api-key');
+const btnSaveKey = document.getElementById('btn-save-key');
+const keyStatus = document.getElementById('key-status');
+
+chrome.storage.local.get(['geminiApiKey'], (result) => {
+  if (result.geminiApiKey) {
+    apiKeyInput.value = result.geminiApiKey;
+    keyStatus.textContent = '保存済み';
+    keyStatus.style.color = '#00ff66';
+  }
+});
+
+btnSaveKey.addEventListener('click', () => {
+  const key = apiKeyInput.value.trim();
+  if (!key) {
+    chrome.storage.local.remove('geminiApiKey');
+    keyStatus.textContent = '削除しました';
+    keyStatus.style.color = '#888';
+  } else {
+    chrome.storage.local.set({ geminiApiKey: key });
+    keyStatus.textContent = '保存しました';
+    keyStatus.style.color = '#00ff66';
+  }
+  setTimeout(() => { keyStatus.textContent = key ? '保存済み' : ''; }, 2000);
+});

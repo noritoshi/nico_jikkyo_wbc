@@ -102,6 +102,20 @@
 
   <div id="status" class="status disconnected">未接続</div>
 
+  <hr style="border-color: #333; margin: 16px 0;">
+
+  <div class="field">
+    <label>Gemini API Key（AI コメント生成用）</label>
+    <input type="text" id="gemini-api-key" placeholder="AIzaSy...">
+    <div style="font-size: 11px; color: #666; margin-top: 4px;">
+      <a href="https://aistudio.google.com/api-keys" target="_blank" style="color: #e94560;">Google AI Studio</a> で取得（無料枠あり）
+    </div>
+  </div>
+  <div class="buttons">
+    <button id="btn-save-key" style="background: #0f3460; color: #eee;">保存</button>
+  </div>
+  <div id="key-status" style="font-size: 12px; color: #888; margin-top: 4px; text-align: center;"></div>
+
   <script src="popup.js"></script>
 </body>
 </html>

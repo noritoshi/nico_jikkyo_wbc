@@ -135,6 +135,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // AI生成キャンセル
+  if (msg.type === 'cancelAiComment') {
+    if (geminiAbortController) geminiAbortController.abort();
+    return;
+  }
+
+  // AI コメント生成リクエスト
+  if (msg.type === 'generateAiComment') {
+    callGeminiApi(msg.data).then((result) => {
+      // リクエスト元のport（content_script）に返す
+      for (const port of contentPorts) {
+        try { port.postMessage({ type: 'aiCommentResult', data: result }); } catch (e) {}
+      }
+    });
+    return;
+  }
+
   // offscreenからのログ転送
   if (msg.type === 'log') {
     debugLog(msg.data);
@@ -167,6 +184,92 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return;
   }
 });
+
+// Gemini API呼び出し
+let geminiAbortController = null;
+
+async function callGeminiApi(data) {
+  const result = await chrome.storage.local.get(['geminiApiKey']);
+  const apiKey = result.geminiApiKey;
+  if (!apiKey) {
+    return { error: 'API Keyが設定されていません。ポップアップで設定してください。' };
+  }
+
+  const systemPrompts = {
+    normal: `あなたはニコニコ生放送の実況コメントを生成するアシスタントです。
+
+現在の番組の直近のコメント:
+{recentComments}
+
+ユーザーの依頼: {userPrompt}
+
+以下のルールに従ってコメントを1つ生成してください:
+- 最大75文字
+- ニコニコ生放送の実況らしい自然な口調
+- 絵文字は使わない
+- コメント本文のみを返してください（説明不要）`,
+
+    shitaCA: `あなたはニコニコ生放送のコメントアート職人です。
+「下積み」方式でコメントアートを作成してください。
+
+下積みの仕組み:
+- 各行が「shita」コマンドで下から上に積み上がる
+- 1行目が最下段、最終行が最上段に表示される
+- 各行は最大75文字（全角）
+- 等幅ではない（MSPゴシック）ので、全角文字・記号で幅を揃える
+- 空白にはU+3000（全角スペース）を使う
+- 最大8行程度が実用的
+
+ユーザーの依頼: {userPrompt}
+
+以下の形式で出力してください（各行がshitaコメントとして投稿されます）:
+1行目（最下段）
+2行目
+...
+最終行（最上段）
+
+コメントアートのみを出力し、説明は不要です。`
+  };
+
+  const template = systemPrompts[data.mode] || systemPrompts.normal;
+  const prompt = template
+    .replace('{userPrompt}', data.userPrompt)
+    .replace('{recentComments}', data.recentComments || '（なし）');
+
+  try {
+    geminiAbortController = new AbortController();
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+        }),
+        signal: geminiAbortController.signal
+      }
+    );
+
+    if (!res.ok) {
+      const errText = await res.text();
+      return { error: `API エラー (${res.status}): ${errText.substring(0, 100)}` };
+    }
+
+    const json = await res.json();
+    const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) {
+      return { error: '生成結果が空でした' };
+    }
+    return { text: text.trim() };
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      return { cancelled: true };
+    }
+    return { error: `通信エラー: ${e.message}` };
+  } finally {
+    geminiAbortController = null;
+  }
+}
 
 // content_scriptからのport接続を管理（tabs権限不要）
 const contentPorts = new Set();
