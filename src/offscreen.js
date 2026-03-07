@@ -9,6 +9,7 @@ function log(...args) {
 
 let watchWs = null;
 let commentAbort = null;
+let vposBaseTime = null; // vpos基準時刻（Date.parse可能な文字列）
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'connect') {
@@ -16,6 +17,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse({ ok: true });
   } else if (msg.type === 'disconnect') {
     closeAll();
+    sendResponse({ ok: true });
+  } else if (msg.type === 'postComment') {
+    postComment(msg.data);
     sendResponse({ ok: true });
   }
   return true;
@@ -174,7 +178,15 @@ async function startConnection({ wsUrl, broadcastId }) {
     }
     // 全メッセージタイプをログ出力（デバッグ用）
     log('[ws] msg type=' + msg.type, JSON.stringify(msg.data).substring(0, 300));
+    if (msg.type === 'postCommentResult') {
+      chrome.runtime.sendMessage({ type: 'postCommentResult', data: msg.data });
+      return;
+    }
     if (msg.type === 'messageServer') {
+      if (msg.data.vposBaseTime) {
+        vposBaseTime = msg.data.vposBaseTime;
+        log('[ws] vposBaseTime:', vposBaseTime);
+      }
       startCommentStream(msg.data.viewUri);
     }
   };
@@ -409,7 +421,7 @@ async function fetchSegment(uri) {
       for (const frame of messages) {
         const c = extractComment(frame);
         if (c) {
-          emitComment(c.text, 0);
+          emitComment(c.text, c.no, 0);
           commentCount++;
         }
       }
@@ -446,7 +458,8 @@ function extractComment(msgBuf) {
 
       const text = bytesToString(textField.data);
       const vpos = commentFields[3]?.[0]?.type === 'varint' ? commentFields[3][0].value : 0;
-      return { text, vpos };
+      const no = commentFields[8]?.[0]?.type === 'varint' ? commentFields[8][0].value : null;
+      return { text, vpos, no };
     } catch (e) {}
   }
   return null;
@@ -467,13 +480,60 @@ function isLikelyComment(text) {
   return true;
 }
 
-function emitComment(text, delayMs = 0) {
+const seenCommentNos = new Set(); // コメント番号による重複排除
+
+function emitComment(text, commentNo, delayMs = 0) {
   if (!isLikelyComment(text)) return;
-  log('[comment]', text.substring(0, 50), 'delay=' + delayMs);
+
+  // コメント番号で重複排除
+  if (commentNo && seenCommentNos.has(commentNo)) {
+    log('[comment] duplicate no=' + commentNo + ' skipped');
+    return;
+  }
+  if (commentNo) {
+    seenCommentNos.add(commentNo);
+    // メモリ管理: 古いエントリを削除
+    if (seenCommentNos.size > 1000) {
+      const iter = seenCommentNos.values();
+      for (let i = 0; i < 500; i++) iter.next();
+      // 先頭500個を削除
+      const arr = Array.from(seenCommentNos);
+      seenCommentNos.clear();
+      for (let i = 500; i < arr.length; i++) seenCommentNos.add(arr[i]);
+    }
+  }
+
+  log('[comment]', text.substring(0, 50), 'no=' + commentNo);
   chrome.runtime.sendMessage({
     type: 'comment',
     data: { text, mail: '', user_id: '', delay: delayMs }
   });
+}
+
+function postComment(data) {
+  if (!watchWs || watchWs.readyState !== WebSocket.OPEN) {
+    log('[post] WebSocket not connected');
+    chrome.runtime.sendMessage({ type: 'postCommentResult', data: { error: 'not_connected' } });
+    return;
+  }
+
+  const vpos = vposBaseTime
+    ? Math.round((Date.now() - Date.parse(vposBaseTime)) / 10)
+    : 0;
+
+  const msg = {
+    type: 'postComment',
+    data: {
+      text: data.text,
+      vpos,
+      isAnonymous: data.isAnonymous !== false
+    }
+  };
+  if (data.color) msg.data.color = data.color;
+  if (data.size) msg.data.size = data.size;
+
+  log('[post] Sending:', JSON.stringify(msg));
+  watchWs.send(JSON.stringify(msg));
 }
 
 function sleep(ms, signal) {

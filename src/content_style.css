@@ -33,3 +33,47 @@
     transform: translateX(calc(-100% - 100vw));
   }
 }
+
+#niko-jikkyo-input-bar {
+  position: fixed;
+  bottom: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2147483647;
+  pointer-events: auto;
+  opacity: 0.5;
+  transition: opacity 0.3s;
+}
+
+#niko-jikkyo-input-bar:hover,
+#niko-jikkyo-input-bar:focus-within {
+  opacity: 1;
+}
+
+#niko-jikkyo-input {
+  width: 400px;
+  padding: 10px 16px;
+  border: 2px solid rgba(255, 255, 255, 0.6);
+  border-radius: 20px;
+  background: rgba(40, 40, 40, 0.85);
+  color: #fff;
+  font-size: 15px;
+  font-family: 'Hiragino Kaku Gothic ProN', 'MS PGothic', sans-serif;
+  outline: none;
+  backdrop-filter: blur(8px);
+}
+
+#niko-jikkyo-input::placeholder {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+#niko-jikkyo-input:focus {
+  border-color: #e94560;
+  background: rgba(40, 40, 40, 0.95);
+  box-shadow: 0 0 8px rgba(233, 69, 96, 0.4);
+}
+
+#niko-jikkyo-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

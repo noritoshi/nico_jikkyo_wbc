@@ -151,6 +151,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return;
   }
 
+  // offscreenからの投稿結果 → content_scriptに転送
+  if (msg.type === 'postCommentResult') {
+    for (const port of contentPorts) {
+      try { port.postMessage({ type: 'postCommentResult', data: msg.data }); } catch (e) {}
+    }
+    return;
+  }
+
   // offscreenからのコメント受信 → content_scriptに転送（port経由）
   if (msg.type === 'comment') {
     for (const port of contentPorts) {

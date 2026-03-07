@@ -74,10 +74,62 @@ function renderComment(commentData) {
   el.addEventListener('animationend', () => el.remove());
 }
 
+// コメント入力欄の作成
+function createCommentInput() {
+  let bar = document.getElementById('niko-jikkyo-input-bar');
+  if (bar) return bar;
+
+  bar = document.createElement('div');
+  bar.id = 'niko-jikkyo-input-bar';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.id = 'niko-jikkyo-input';
+  input.placeholder = 'コメントを入力（Enter で送信）';
+  input.maxLength = 75;
+
+  input.addEventListener('keydown', (e) => {
+    e.stopPropagation(); // Netflixのキーボードショートカットを防止
+    if (e.key === 'Enter' && input.value.trim()) {
+      chrome.runtime.sendMessage({
+        type: 'postComment',
+        data: { text: input.value.trim(), isAnonymous: true }
+      });
+      input.value = '';
+    }
+  });
+
+  // フォーカス中のキー入力がNetflixに伝播しないようにする
+  input.addEventListener('keyup', (e) => e.stopPropagation());
+  input.addEventListener('keypress', (e) => e.stopPropagation());
+
+  bar.appendChild(input);
+  document.body.appendChild(bar);
+  return bar;
+}
+
+createCommentInput();
+
 // backgroundからのコメント受信（port接続方式）
 const port = chrome.runtime.connect({ name: 'niko-jikkyo' });
-port.onMessage.addListener((commentData) => {
-  renderComment(commentData);
+port.onMessage.addListener((msg) => {
+  // 投稿結果
+  if (msg.type === 'postCommentResult') {
+    if (msg.data.error) {
+      const input = document.getElementById('niko-jikkyo-input');
+      if (input) {
+        input.placeholder = 'ニコニコにログインすると投稿できます';
+        input.disabled = true;
+        setTimeout(() => {
+          input.placeholder = 'コメントを入力（Enter で送信）';
+          input.disabled = false;
+        }, 3000);
+      }
+    }
+    return;
+  }
+  // 通常のコメント表示
+  renderComment(msg);
 });
 
 } // end of guard
