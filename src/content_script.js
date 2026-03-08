@@ -342,7 +342,13 @@ function createCommentInput() {
       <select id="niko-ai-mode">
         <option value="normal">通常コメント</option>
         <option value="shitaCA" disabled>下積みコメントアート（プレミアム）</option>
+        <option value="imageAA" disabled>画像→コメントアート（プレミアム）</option>
       </select>
+    </div>
+    <div id="niko-ai-image-row" class="niko-ai-row" style="display:none;">
+      <label class="niko-ai-image-label" id="niko-ai-image-label">画像を選択</label>
+      <input type="file" id="niko-ai-image-input" accept="image/*" style="display:none;">
+      <img id="niko-ai-image-thumb" style="display:none;">
     </div>
     <div class="niko-ai-row">
       <input type="text" id="niko-ai-prompt" placeholder="依頼を入力（例: 野球のAAを作って）" maxlength="200">
@@ -372,6 +378,63 @@ function createCommentInput() {
   const aiModeSelect = aiPanel.querySelector('#niko-ai-mode');
   const aiStatus = aiPanel.querySelector('#niko-ai-status');
 
+  // 画像アップロード関連
+  const aiImageRow = aiPanel.querySelector('#niko-ai-image-row');
+  const aiImageInput = aiPanel.querySelector('#niko-ai-image-input');
+  const aiImageLabel = aiPanel.querySelector('#niko-ai-image-label');
+  const aiImageThumb = aiPanel.querySelector('#niko-ai-image-thumb');
+  let aiImageBase64 = null;
+  let aiImageMimeType = null;
+
+  // モード切替で画像行の表示/非表示
+  aiModeSelect.addEventListener('change', () => {
+    const isImageMode = aiModeSelect.value === 'imageAA';
+    aiImageRow.style.display = isImageMode ? 'flex' : 'none';
+    aiPromptInput.placeholder = isImageMode
+      ? '追加の指示（任意）'
+      : '依頼を入力（例: 野球のAAを作って）';
+  });
+
+  // 画像選択ラベルクリック → file inputを開く
+  aiImageLabel.addEventListener('click', () => aiImageInput.click());
+
+  // 画像をリサイズ・圧縮してbase64にする（大きい画像でAPI 500エラーを防ぐ）
+  function resizeImage(dataUrl, maxSize) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        if (w > maxSize || h > maxSize) {
+          const ratio = Math.min(maxSize / w, maxSize / h);
+          w = Math.round(w * ratio);
+          h = Math.round(h * ratio);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', 0.7));
+      };
+      img.src = dataUrl;
+    });
+  }
+
+  // 画像選択時の処理
+  aiImageInput.addEventListener('change', () => {
+    const file = aiImageInput.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const compressed = await resizeImage(e.target.result, 256);
+      aiImageBase64 = compressed.split(',')[1];
+      aiImageMimeType = 'image/jpeg';
+      aiImageThumb.src = compressed;
+      aiImageThumb.style.display = 'block';
+      aiImageLabel.textContent = file.name;
+    };
+    reader.readAsDataURL(file);
+  });
+
   // AIパネル内のキーイベントがNetflixに伝播しないようにする
   aiPanel.addEventListener('keydown', (e) => e.stopPropagation());
   aiPanel.addEventListener('keyup', (e) => e.stopPropagation());
@@ -391,7 +454,16 @@ function createCommentInput() {
     }
 
     const userPrompt = aiPromptInput.value.trim();
-    if (!userPrompt) return;
+    const isImageMode = aiModeSelect.value === 'imageAA';
+
+    // 通常・shitaCAモードはプロンプト必須、imageAAモードは画像必須
+    if (!isImageMode && !userPrompt) return;
+    if (isImageMode && !aiImageBase64) {
+      aiStatus.textContent = '画像を選択してください';
+      aiStatus.style.color = '#ff4444';
+      setTimeout(() => { aiStatus.textContent = ''; }, 2000);
+      return;
+    }
 
     aiGenerating = true;
     aiStatus.innerHTML = '<span class="niko-ai-loading"></span> AIが思考中...';
@@ -403,13 +475,19 @@ function createCommentInput() {
     // 直近コメントを収集（表示済みから最新20件）
     const recentTexts = recentRendered.slice(-20).map(c => c.text).join('\n');
 
+    const msgData = {
+      mode: aiModeSelect.value,
+      userPrompt: userPrompt,
+      recentComments: recentTexts
+    };
+    if (isImageMode) {
+      msgData.imageBase64 = aiImageBase64;
+      msgData.imageMimeType = aiImageMimeType;
+    }
+
     chrome.runtime.sendMessage({
       type: 'generateAiComment',
-      data: {
-        mode: aiModeSelect.value,
-        userPrompt: userPrompt,
-        recentComments: recentTexts
-      }
+      data: msgData
     });
   });
 
@@ -443,7 +521,7 @@ function createCommentInput() {
     if (!text) return;
 
     const mode = aiModeSelect.value;
-    if (mode === 'shitaCA') {
+    if (mode === 'shitaCA' || mode === 'imageAA') {
       // 下積みCA: 各行をshitaコメントとして100ms間隔で連続送信
       const lines = text.split('\n').filter(l => l.replace(/[\s\u3000]/g, '').length > 0).reverse();
       lines.forEach((line, i) => {
@@ -483,6 +561,8 @@ chrome.storage.local.get(['isPremium'], (result) => {
     premiumPosBtns.forEach(btn => { btn.disabled = false; btn.title = ''; });
     const shitaOption = document.querySelector('#niko-ai-mode option[value="shitaCA"]');
     if (shitaOption) { shitaOption.disabled = false; shitaOption.textContent = '下積みコメントアート'; }
+    const imageOption = document.querySelector('#niko-ai-mode option[value="imageAA"]');
+    if (imageOption) { imageOption.disabled = false; imageOption.textContent = '画像→コメントアート'; }
   }
 });
 
@@ -497,11 +577,16 @@ port.onMessage.addListener((msg) => {
       btn.disabled = !isPremiumUser;
       btn.title = isPremiumUser ? '' : 'プレミアム会員限定';
     });
-    // AIパネルの下積みコメントアート
+    // AIパネルのプレミアム限定モード
     const shitaOption = document.querySelector('#niko-ai-mode option[value="shitaCA"]');
     if (shitaOption) {
       shitaOption.disabled = !isPremiumUser;
       shitaOption.textContent = isPremiumUser ? '下積みコメントアート' : '下積みコメントアート（プレミアム）';
+    }
+    const imageOption = document.querySelector('#niko-ai-mode option[value="imageAA"]');
+    if (imageOption) {
+      imageOption.disabled = !isPremiumUser;
+      imageOption.textContent = isPremiumUser ? '画像→コメントアート' : '画像→コメントアート（プレミアム）';
     }
     return;
   }

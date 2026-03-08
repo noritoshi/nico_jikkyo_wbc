@@ -206,6 +206,8 @@ async function callGeminiApi(data) {
     return { error: 'API Keyが設定されていません。ポップアップで設定してください。' };
   }
 
+  const hasImage = data.imageBase64 && data.imageMimeType;
+
   const systemPrompts = {
     normal: `あなたはニコニコ生放送の実況コメントを生成するアシスタントです。
 
@@ -254,42 +256,123 @@ async function callGeminiApi(data) {
 
 ユーザーの依頼: {userPrompt}
 
+テキストアートのみを出力:`,
+
+    imageAA: `あなたはニコニコ生放送で愛される「コメントアート（CA）職人」です。
+添付された画像の内容を読み取り、そのシーンにふさわしいコメントアートを作成してください。
+画像をピクセル単位で再現するのではなく、画像の状況・テーマ・感情を表現するCAを作ってください。
+
+■ 画像の読み取り方:
+- 何が写っているか（人物、チーム、場面など）を把握する
+- その場面の感情や盛り上がりを読み取る
+- 文字情報（背番号、名前、スコアなど）があれば活用する
+
+■ ルール:
+- 構成: 4〜6行（画面下部で最も見栄えが良い段数）
+- 横幅: 各行最大75文字（全角35文字程度が安全）
+- 禁止: 全角スペースのみの行は絶対に作らない。必ず何らかの記号や文字を含めること
+- 出力: 説明・番号・コードブロック囲み・「shita」等のコマンドは一切不要。テキストアート本体のみを出力
+
+■ 使える文字（推奨順）:
+1. 罫線素片（枠作りに最適、環境差が少ない）: ╔═╗║╚╝╠╣╦╩ ┌─┐│└┘┏━┓┃┗┛
+2. ブロック要素（背景埋め、グラデーション）: █▓░▄▀
+3. 幾何学記号（アクセント）: ★☆■□◆◇●○▲▼
+4. カラー絵文字は幅が環境依存でズレやすいため、使わないこと
+
+■ デザイン指針:
+- 罫線素片で枠を作り、テレビのテロップのような整った見た目にする
+- 各行の横幅（文字数）を揃えて整ったシルエットにする
+- 画像から読み取った情報（チーム名、選手名、場面の説明など）をCAに盛り込む
+- 二重線枠（╔═╗）はテロップ感・高級感が出るのでおすすめ
+
+{userPrompt}
+
 テキストアートのみを出力:`
   };
 
   const template = systemPrompts[data.mode] || systemPrompts.normal;
+  const userPromptText = data.mode === 'imageAA' && data.userPrompt
+    ? `追加の指示: ${data.userPrompt}` : data.userPrompt;
   const prompt = template
-    .replace('{userPrompt}', data.userPrompt)
+    .replace('{userPrompt}', userPromptText || '')
     .replace('{recentComments}', data.recentComments || '（なし）');
+
+  // リクエストボディのparts構築（画像がある場合はマルチモーダル）
+  const parts = [{ text: prompt }];
+  if (hasImage) {
+    parts.push({ inline_data: { mime_type: data.imageMimeType, data: data.imageBase64 } });
+  }
 
   try {
     geminiAbortController = new AbortController();
-    // コメントアートは賢いモデルを使う
-    const model = data.mode === 'shitaCA' ? 'gemini-2.5-flash' : 'gemini-3.1-flash-lite-preview';
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-      {
+    // モデル選択: shitaCA=thinking model, imageAA=非thinking model, 通常=lite
+    const isShitaCA = data.mode === 'shitaCA';
+    const isImageAA = data.mode === 'imageAA';
+    const isCA = isShitaCA || isImageAA;
+    const model = isCA ? 'gemini-2.5-flash' : 'gemini-3.1-flash-lite-preview';
+    const genConfig = {};
+    if (isShitaCA) {
+      genConfig.maxOutputTokens = 16384;
+      genConfig.temperature = 0.2;
+      genConfig.thinkingConfig = { thinkingBudget: 4096 };
+    } else if (isImageAA) {
+      genConfig.maxOutputTokens = 8192;
+      genConfig.temperature = 0.4;
+      genConfig.thinkingConfig = { thinkingBudget: 4096 };
+    } else {
+      genConfig.maxOutputTokens = 1024;
+    }
+    const requestBody = {
+      contents: [{ parts }],
+      generationConfig: genConfig,
+    };
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+    // API呼び出し（500エラーor空出力で最大2回リトライ）
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const res = await fetch(apiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { maxOutputTokens: data.mode === 'shitaCA' ? 8192 : 1024 },
-        }),
+        body: JSON.stringify(requestBody),
         signal: geminiAbortController.signal
+      });
+
+      if (res.status === 500) {
+        if (attempt < 2) { await new Promise(r => setTimeout(r, 1000)); continue; }
+        return { error: 'API サーバーエラーが続いています。しばらく待ってから再試行してください。' };
       }
-    );
 
-    if (!res.ok) {
-      const errText = await res.text();
-      return { error: `API エラー (${res.status}): ${errText.substring(0, 100)}` };
-    }
+      if (!res.ok) {
+        const errText = await res.text();
+        return { error: `API エラー (${res.status}): ${errText.substring(0, 100)}` };
+      }
 
-    const json = await res.json();
-    const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) {
-      return { error: '生成結果が空でした' };
+      const json = await res.json();
+      // thinking modelはparts内に{thought:true}のパートと実際の出力パートがある
+      const resParts = json.candidates?.[0]?.content?.parts || [];
+      let text = resParts.filter(p => !p.thought).map(p => p.text).join('');
+
+      // コードブロック(```)で囲まれている場合は中身だけ抽出
+      const codeBlockMatch = text.match(/```[\s\S]*?\n([\s\S]*?)```/);
+      if (codeBlockMatch) text = codeBlockMatch[1];
+      text = text.trim();
+
+      // 全角スペース・罫線のみで中身がない出力を検知してリトライ
+      const contentChars = text.replace(/[\s　╔═╗║╚╝╠╣╦╩┌─┐│└┘┏━┓┃┗┛]/g, '');
+      if (!contentChars && attempt < 2) {
+        debugLog('[bg] Empty CA output, retrying...', attempt);
+        genConfig.temperature = Math.min((genConfig.temperature || 0.3) + 0.2, 1.0);
+        requestBody.generationConfig = genConfig;
+        await new Promise(r => setTimeout(r, 500));
+        continue;
+      }
+
+      if (!text) {
+        return { error: '生成結果が空でした' };
+      }
+      return { text };
     }
-    return { text: text.trim() };
+    return { error: '生成に失敗しました。再試行してください。' };
   } catch (e) {
     if (e.name === 'AbortError') {
       return { cancelled: true };
