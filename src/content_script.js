@@ -8,6 +8,9 @@ let commentsHidden = false;
 let aiGeneratedText = '';
 let aiIsEditing = false;
 let aiGenerating = false;
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 let isPremiumUser = false;
 const premiumPosBtns = [];
 const LANE_COUNT = 12;
@@ -319,6 +322,22 @@ function createCommentInput() {
   });
   inputRow.appendChild(aiBtn);
 
+  // 概要ボタン
+  const summaryBtn = document.createElement('button');
+  summaryBtn.id = 'niko-jikkyo-summary-btn';
+  summaryBtn.textContent = '概要';
+  summaryBtn.addEventListener('click', () => {
+    const panel = document.getElementById('niko-jikkyo-summary-panel');
+    if (panel) {
+      panel.classList.toggle('open');
+      // 開いた時にユーザー一覧を取得
+      if (panel.classList.contains('open')) {
+        chrome.runtime.sendMessage({ type: 'getUserList' });
+      }
+    }
+  });
+  inputRow.appendChild(summaryBtn);
+
   // コメント非表示トグルボタン
   const toggleBtn = document.createElement('button');
   toggleBtn.id = 'niko-jikkyo-toggle';
@@ -361,6 +380,67 @@ function createCommentInput() {
     <div id="niko-ai-status"></div>
   `;
   bar.appendChild(aiPanel);
+
+  // 右サイドパネル（概要 + ユーザー一覧を同時表示）
+  const summaryPanel = document.createElement('div');
+  summaryPanel.id = 'niko-jikkyo-summary-panel';
+  summaryPanel.innerHTML = `
+    <div class="niko-side-header">
+      <span>実況ダッシュボード</span>
+      <div class="niko-summary-auto">
+        <label><input type="checkbox" id="niko-summary-auto-toggle"> 自動更新</label>
+      </div>
+    </div>
+    <div class="niko-side-section">
+      <div class="niko-side-section-title">AI概要</div>
+      <div id="niko-summary-content" style="display:none;">
+        <pre id="niko-summary-text"></pre>
+      </div>
+      <div id="niko-summary-status">「自動更新」ONで3分間隔で更新</div>
+    </div>
+    <div class="niko-side-section niko-side-section-grow">
+      <div class="niko-side-section-title">ユーザー一覧</div>
+      <div id="niko-user-list"></div>
+      <div id="niko-user-status"></div>
+    </div>
+  `;
+  // input-barではなくbodyに直接追加（サイドパネルは独立配置）
+  document.body.appendChild(summaryPanel);
+
+  // サイドパネル内のキーイベントがNetflixに伝播しないようにする
+  summaryPanel.addEventListener('keydown', (e) => e.stopPropagation());
+  summaryPanel.addEventListener('keyup', (e) => e.stopPropagation());
+  summaryPanel.addEventListener('keypress', (e) => e.stopPropagation());
+
+  // 自動更新トグル
+  const autoToggle = summaryPanel.querySelector('#niko-summary-auto-toggle');
+  autoToggle.addEventListener('change', () => {
+    chrome.runtime.sendMessage({ type: 'toggleAutoSummary', enabled: autoToggle.checked });
+    const status = document.getElementById('niko-summary-status');
+    if (autoToggle.checked) {
+      if (status) {
+        status.innerHTML = '<span class="niko-ai-loading"></span> コメントを分析中...';
+        status.style.color = '#00bcd4';
+      }
+    } else {
+      if (status) {
+        status.textContent = '自動更新を停止しました';
+        status.style.color = '#888';
+      }
+    }
+  });
+
+  // ユーザー一覧の定期更新（10秒間隔、パネルが開いている時のみ）
+  let userListTimer = null;
+  function startUserListUpdate() {
+    if (userListTimer) return;
+    userListTimer = setInterval(() => {
+      if (summaryPanel.classList.contains('open')) {
+        chrome.runtime.sendMessage({ type: 'getUserList' });
+      }
+    }, 10000);
+  }
+  startUserListUpdate();
 
   // AIパネルのイベント
   const aiPromptInput = aiPanel.querySelector('#niko-ai-prompt');
@@ -568,6 +648,77 @@ port.onMessage.addListener((msg) => {
       if (editBtn) editBtn.textContent = '編集';
       previewArea.style.display = 'block';
       status.textContent = '';
+    }
+    return;
+  }
+  // 概要生成中ステータス
+  if (msg.type === 'summaryStatus') {
+    const status = document.getElementById('niko-summary-status');
+    if (status && msg.data === 'generating') {
+      status.innerHTML = '<span class="niko-ai-loading"></span> コメントを分析中...';
+      status.style.color = '#00bcd4';
+    }
+    return;
+  }
+  // 概要結果（自動更新 or 手動）
+  if (msg.type === 'summaryResult') {
+    const content = document.getElementById('niko-summary-content');
+    const textEl = document.getElementById('niko-summary-text');
+    const status = document.getElementById('niko-summary-status');
+    if (msg.data.cancelled) return;
+    if (msg.data.error) {
+      if (status) { status.textContent = msg.data.error; status.style.color = '#ff4444'; }
+      return;
+    }
+    if (textEl && content && status) {
+      textEl.textContent = msg.data.text;
+      content.style.display = 'block';
+      const now = new Date();
+      const timeStr = `${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`;
+      status.textContent = `${timeStr} 更新 | ${msg.data.commentCount || 0}件のコメントを分析`;
+      status.style.color = '#00bcd4';
+    }
+    return;
+  }
+  // ユーザー一覧結果
+  if (msg.type === 'userListResult') {
+    const listEl = document.getElementById('niko-user-list');
+    const statusEl = document.getElementById('niko-user-status');
+    if (!listEl) return;
+    const { users, totalComments } = msg.data;
+    if (!users || users.length === 0) {
+      listEl.innerHTML = '<div class="niko-user-empty">コメントがありません</div>';
+      if (statusEl) statusEl.textContent = '';
+      return;
+    }
+    const now = Date.now();
+    let html = '';
+    for (const u of users.slice(0, 30)) {
+      const uid = u.userId.replace('a:', '').substring(0, 8);
+      const agoSec = Math.round((now - u.lastTime) / 1000);
+      const agoStr = agoSec >= 60 ? `${Math.floor(agoSec / 60)}分前` : `${agoSec}秒前`;
+      const recentComment = u.comments[u.comments.length - 1] || '';
+      const tendencyHtml = u.tendency
+        ? `<span class="niko-user-tendency">${escapeHtml(u.tendency)}</span>` : '';
+      html += `<div class="niko-user-row">
+        <div class="niko-user-info">
+          <span class="niko-user-id">${uid}</span>
+          <span class="niko-user-count">${u.count}件</span>
+          ${tendencyHtml}
+          <span class="niko-user-ago">${agoStr}</span>
+        </div>
+        <div class="niko-user-comments">`;
+      // 直近のコメントを表示（最新が上）
+      for (let i = u.comments.length - 1; i >= 0; i--) {
+        const opacity = i === u.comments.length - 1 ? '1' : '0.5';
+        html += `<div class="niko-user-comment" style="opacity:${opacity}">${escapeHtml(u.comments[i])}</div>`;
+      }
+      html += `</div></div>`;
+    }
+    listEl.innerHTML = html;
+    if (statusEl) {
+      statusEl.textContent = `${users.length}人 / ${totalComments}コメント（直近5分間）`;
+      statusEl.style.color = '#00bcd4';
     }
     return;
   }

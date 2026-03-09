@@ -421,7 +421,7 @@ async function fetchSegment(uri) {
       for (const frame of messages) {
         const c = extractComment(frame);
         if (c) {
-          emitComment(c.text, c.no, c.mail);
+          emitComment(c.text, c.no, c.mail, c.userId);
           commentCount++;
         }
       }
@@ -488,7 +488,11 @@ function extractComment(msgBuf) {
         mail = parts.join(' ');
         if (mail) log('[comment] modifier:', mail);
       }
-      return { text, vpos, no, mail };
+      // f6: ユーザーハッシュ（匿名ID）
+      const userId = commentFields[6]?.[0]?.type === 'bytes'
+        ? bytesToString(commentFields[6][0].data) : null;
+
+      return { text, vpos, no, mail, userId };
     } catch (e) {}
   }
   return null;
@@ -511,7 +515,7 @@ function isLikelyComment(text) {
 
 const seenCommentNos = new Set(); // コメント番号による重複排除
 
-function emitComment(text, commentNo, mail = '') {
+function emitComment(text, commentNo, mail = '', userId = null) {
   if (!isLikelyComment(text)) return;
 
   // コメント番号で重複排除
@@ -531,7 +535,7 @@ function emitComment(text, commentNo, mail = '') {
   log('[comment]', text.substring(0, 50), 'no=' + commentNo, 'mail=' + mail);
   chrome.runtime.sendMessage({
     type: 'comment',
-    data: { text, mail }
+    data: { text, mail, userId }
   });
 }
 

@@ -400,3 +400,207 @@
   to { transform: rotate(360deg); }
 }
 
+/* 概要ボタン */
+#niko-jikkyo-summary-btn {
+  padding: 8px 12px;
+  border: 2px solid rgba(0, 188, 212, 0.6);
+  border-radius: 20px;
+  background: rgba(40, 40, 40, 0.85);
+  color: #00bcd4;
+  font-size: 12px;
+  font-weight: bold;
+  font-family: 'Hiragino Kaku Gothic ProN', sans-serif;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  white-space: nowrap;
+}
+
+#niko-jikkyo-summary-btn:hover {
+  background: rgba(0, 188, 212, 0.2);
+}
+
+/* 右サイドパネル */
+#niko-jikkyo-summary-panel {
+  display: none;
+  flex-direction: column;
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  bottom: 170px;
+  width: 320px;
+  background: rgba(20, 20, 35, 0.92);
+  border: 1px solid rgba(0, 188, 212, 0.3);
+  border-radius: 12px;
+  backdrop-filter: blur(12px);
+  z-index: 2147483647;
+  pointer-events: auto;
+  overflow: hidden;
+  opacity: 0.85;
+  transition: opacity 0.3s;
+}
+
+#niko-jikkyo-summary-panel:hover {
+  opacity: 1;
+}
+
+#niko-jikkyo-summary-panel.open {
+  display: flex;
+}
+
+.niko-side-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(0, 188, 212, 0.2);
+  flex-shrink: 0;
+}
+
+.niko-side-header span {
+  color: #00bcd4;
+  font-size: 13px;
+  font-weight: bold;
+  font-family: 'Hiragino Kaku Gothic ProN', sans-serif;
+}
+
+.niko-summary-auto label {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 11px;
+  font-family: 'Hiragino Kaku Gothic ProN', sans-serif;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.niko-summary-auto input[type="checkbox"] {
+  accent-color: #00bcd4;
+}
+
+.niko-side-section {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+  overflow-y: auto;
+  max-height: 40%;
+}
+
+.niko-side-section-grow {
+  flex: 1;
+  min-height: 0;
+  border-bottom: none;
+}
+
+.niko-side-section-title {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 10px;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 6px;
+  font-family: 'Hiragino Kaku Gothic ProN', sans-serif;
+}
+
+#niko-summary-text {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 8px;
+  color: #ddd;
+  font-size: 11px;
+  font-family: 'Hiragino Kaku Gothic ProN', sans-serif;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+  text-align: left;
+  line-height: 1.5;
+}
+
+#niko-summary-status,
+#niko-user-status {
+  font-size: 10px;
+  text-align: center;
+  min-height: 14px;
+  margin-top: 4px;
+  font-family: 'Hiragino Kaku Gothic ProN', sans-serif;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+/* ユーザー一覧 */
+#niko-user-list {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-height: 0;
+}
+
+.niko-user-row {
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 4px;
+  padding: 4px 6px;
+  border-left: 2px solid rgba(0, 188, 212, 0.3);
+}
+
+.niko-user-info {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 2px;
+}
+
+.niko-user-id {
+  color: #00bcd4;
+  font-size: 10px;
+  font-family: monospace;
+  font-weight: bold;
+}
+
+.niko-user-count {
+  color: #ffcc00;
+  font-size: 10px;
+  font-weight: bold;
+}
+
+.niko-user-tendency {
+  color: #a0e8a0;
+  font-size: 9px;
+  background: rgba(160, 232, 160, 0.12);
+  border: 1px solid rgba(160, 232, 160, 0.25);
+  border-radius: 3px;
+  padding: 0 4px;
+  white-space: nowrap;
+}
+
+.niko-user-ago {
+  color: rgba(255, 255, 255, 0.35);
+  font-size: 9px;
+  margin-left: auto;
+}
+
+.niko-user-comments {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.niko-user-comment {
+  color: #ccc;
+  font-size: 11px;
+  font-family: 'Hiragino Kaku Gothic ProN', sans-serif;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 280px;
+  line-height: 1.3;
+}
+
+.niko-user-empty {
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 12px;
+  text-align: center;
+  padding: 16px;
+  font-family: 'Hiragino Kaku Gothic ProN', sans-serif;
+}
+
