@@ -11,6 +11,9 @@ let aiGenerating = false;
 function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
+// 概要履歴キャッシュ（グラフホバー用）
+let summaryHistoryCache = []; // [{time, text}]
+
 function drawCommentGraph(points) {
   const canvas = document.getElementById('niko-comment-graph');
   if (!canvas) return;
@@ -437,7 +440,10 @@ function createCommentInput() {
     </div>
     <div class="niko-side-section niko-graph-section">
       <div class="niko-side-section-title">コメント推移</div>
-      <canvas id="niko-comment-graph" width="288" height="60"></canvas>
+      <div class="niko-graph-container">
+        <canvas id="niko-comment-graph" width="288" height="60"></canvas>
+        <div id="niko-graph-tooltip" class="niko-graph-tooltip" style="display:none;"></div>
+      </div>
     </div>
     <div class="niko-side-section">
       <div class="niko-side-section-title">AI概要</div>
@@ -498,6 +504,46 @@ function createCommentInput() {
   }, 5000);
   // 初回取得
   setTimeout(() => chrome.runtime.sendMessage({ type: 'getCommentGraph' }).catch(() => {}), 500);
+
+  // 概要履歴の定期取得（グラフホバー用、30秒間隔）
+  setInterval(() => {
+    if (summaryPanel.classList.contains('open')) {
+      chrome.runtime.sendMessage({ type: 'getSummaryHistory' }).catch(() => {});
+    }
+  }, 30000);
+  setTimeout(() => chrome.runtime.sendMessage({ type: 'getSummaryHistory' }).catch(() => {}), 1000);
+
+  // グラフホバーでAI概要ツールチップ表示
+  const graphCanvas = summaryPanel.querySelector('#niko-comment-graph');
+  const graphTooltip = summaryPanel.querySelector('#niko-graph-tooltip');
+  if (graphCanvas && graphTooltip) {
+    const GRAPH_DURATION = 10 * 60 * 1000; // 10分
+    graphCanvas.addEventListener('mousemove', (e) => {
+      const rect = graphCanvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const ratio = x / rect.width;
+      // 0=10分前, 1=now
+      const hoverTime = Date.now() - GRAPH_DURATION * (1 - ratio);
+      // 最も近い概要を探す
+      let closest = null;
+      let minDist = Infinity;
+      for (const s of summaryHistoryCache) {
+        const dist = Math.abs(s.time - hoverTime);
+        if (dist < minDist) { minDist = dist; closest = s; }
+      }
+      if (closest && minDist < 5 * 60 * 1000) { // 5分以内
+        const ago = Math.round((Date.now() - closest.time) / 60000);
+        const agoStr = ago <= 0 ? '直近' : `${ago}分前`;
+        graphTooltip.textContent = `${agoStr}の雰囲気:\n${closest.text}`;
+        graphTooltip.style.display = 'block';
+      } else {
+        graphTooltip.style.display = 'none';
+      }
+    });
+    graphCanvas.addEventListener('mouseleave', () => {
+      graphTooltip.style.display = 'none';
+    });
+  }
 
   // AIパネルのイベント
   const aiPromptInput = aiPanel.querySelector('#niko-ai-prompt');
@@ -735,6 +781,11 @@ port.onMessage.addListener((msg) => {
       status.textContent = `${timeStr} 更新 | ${msg.data.commentCount || 0}件のコメントを分析`;
       status.style.color = '#00bcd4';
     }
+    return;
+  }
+  // 概要履歴結果
+  if (msg.type === 'summaryHistoryResult') {
+    summaryHistoryCache = msg.data || [];
     return;
   }
   // コメントグラフ結果

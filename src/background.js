@@ -223,6 +223,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return;
   }
 
+  // 概要履歴リクエスト（グラフホバー用）
+  if (msg.type === 'getSummaryHistory') {
+    for (const port of contentPorts) {
+      try { port.postMessage({ type: 'summaryHistoryResult', data: summaryHistory }); } catch (e) {}
+    }
+    return;
+  }
+
   // コメントグラフデータリクエスト
   if (msg.type === 'getCommentGraph') {
     const points = getGraphData();
@@ -505,7 +513,7 @@ ${formatted}
 以下の形式で分析結果を日本語で出力してください:
 
 ## 場の雰囲気
-全体の盛り上がり度合い、主な話題、場の空気を2-3文で簡潔に。
+全体の盛り上がり度合い、主な話題、場の空気を2-3文で簡潔に。「直近○分間では」等の時間への言及は不要。
 
 ## 話題のトピック
 箇条書きで主な話題を3-5個（各1行で簡潔に）
@@ -579,6 +587,11 @@ JSONブロックは必ず \`\`\`json と \`\`\` で囲んでください。20名
     // MAX_TOKENSで```が閉じなかった場合もJSONを除去
     text = text.replace(/```json[\s\S]*$/, '').trim();
 
+    // 「場の雰囲気」セクションだけ抽出して履歴に保存
+    const moodMatch = text.match(/##\s*場の雰囲気\s*\n([\s\S]*?)(?=\n##|\n```|$)/);
+    if (moodMatch) {
+      addSummaryHistory(moodMatch[1].trim());
+    }
     return { text, commentCount: commentLog.length };
   } catch (e) {
     if (e.name === 'AbortError') {
@@ -588,6 +601,15 @@ JSONブロックは必ず \`\`\`json と \`\`\` で囲んでください。20名
   } finally {
     summaryAbortController = null;
   }
+}
+
+// 概要履歴（タイムスタンプ付き、グラフホバー用）
+const summaryHistory = []; // [{time, text}]
+const SUMMARY_HISTORY_MAX = 20;
+
+function addSummaryHistory(text) {
+  summaryHistory.push({ time: Date.now(), text });
+  while (summaryHistory.length > SUMMARY_HISTORY_MAX) summaryHistory.shift();
 }
 
 // 概要の自動更新タイマー（3分間隔）
