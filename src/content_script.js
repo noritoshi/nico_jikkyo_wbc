@@ -11,6 +11,49 @@ let aiGenerating = false;
 function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
+function drawCommentGraph(points) {
+  const canvas = document.getElementById('niko-comment-graph');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  const pad = { top: 2, bottom: 12, left: 0, right: 0 };
+  const gw = w - pad.left - pad.right;
+  const gh = h - pad.top - pad.bottom;
+  ctx.clearRect(0, 0, w, h);
+  const max = Math.max(...points, 1);
+  // 塗りつぶし
+  ctx.beginPath();
+  ctx.moveTo(pad.left, h - pad.bottom);
+  for (let i = 0; i < points.length; i++) {
+    const x = pad.left + (i / (points.length - 1)) * gw;
+    const y = pad.top + gh - (points[i] / max) * gh;
+    ctx.lineTo(x, y);
+  }
+  ctx.lineTo(pad.left + gw, h - pad.bottom);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(0, 188, 212, 0.15)';
+  ctx.fill();
+  // 線
+  ctx.beginPath();
+  for (let i = 0; i < points.length; i++) {
+    const x = pad.left + (i / (points.length - 1)) * gw;
+    const y = pad.top + gh - (points[i] / max) * gh;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.strokeStyle = '#00bcd4';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  // 時間軸ラベル
+  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  ctx.font = '9px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('-10m', pad.left + 10, h - 1);
+  ctx.fillText('-5m', pad.left + gw * 0.5, h - 1);
+  ctx.fillText('now', pad.left + gw - 10, h - 1);
+  // 最大値ラベル
+  ctx.textAlign = 'right';
+  ctx.fillText(max + '/10s', w - 2, pad.top + 9);
+}
 let isPremiumUser = false;
 const premiumPosBtns = [];
 const LANE_COUNT = 12;
@@ -325,14 +368,15 @@ function createCommentInput() {
   // 概要ボタン
   const summaryBtn = document.createElement('button');
   summaryBtn.id = 'niko-jikkyo-summary-btn';
-  summaryBtn.textContent = '概要';
+  summaryBtn.textContent = '実況';
   summaryBtn.addEventListener('click', () => {
     const panel = document.getElementById('niko-jikkyo-summary-panel');
     if (panel) {
       panel.classList.toggle('open');
-      // 開いた時にユーザー一覧を取得
+      // 開いた時にユーザー一覧とグラフを取得
       if (panel.classList.contains('open')) {
-        chrome.runtime.sendMessage({ type: 'getUserList' });
+        chrome.runtime.sendMessage({ type: 'getUserList' }).catch(() => {});
+        chrome.runtime.sendMessage({ type: 'getCommentGraph' }).catch(() => {});
       }
     }
   });
@@ -391,6 +435,10 @@ function createCommentInput() {
         <label><input type="checkbox" id="niko-summary-auto-toggle"> 自動更新</label>
       </div>
     </div>
+    <div class="niko-side-section niko-graph-section">
+      <div class="niko-side-section-title">コメント推移</div>
+      <canvas id="niko-comment-graph" width="288" height="60"></canvas>
+    </div>
     <div class="niko-side-section">
       <div class="niko-side-section-title">AI概要</div>
       <div id="niko-summary-content" style="display:none;">
@@ -436,11 +484,20 @@ function createCommentInput() {
     if (userListTimer) return;
     userListTimer = setInterval(() => {
       if (summaryPanel.classList.contains('open')) {
-        chrome.runtime.sendMessage({ type: 'getUserList' });
+        chrome.runtime.sendMessage({ type: 'getUserList' }).catch(() => {});
       }
     }, 10000);
   }
   startUserListUpdate();
+
+  // コメントグラフの定期更新（5秒間隔）
+  setInterval(() => {
+    if (summaryPanel.classList.contains('open')) {
+      chrome.runtime.sendMessage({ type: 'getCommentGraph' }).catch(() => {});
+    }
+  }, 5000);
+  // 初回取得
+  setTimeout(() => chrome.runtime.sendMessage({ type: 'getCommentGraph' }).catch(() => {}), 500);
 
   // AIパネルのイベント
   const aiPromptInput = aiPanel.querySelector('#niko-ai-prompt');
@@ -680,6 +737,11 @@ port.onMessage.addListener((msg) => {
     }
     return;
   }
+  // コメントグラフ結果
+  if (msg.type === 'commentGraphResult') {
+    drawCommentGraph(msg.data);
+    return;
+  }
   // ユーザー一覧結果
   if (msg.type === 'userListResult') {
     const listEl = document.getElementById('niko-user-list');
@@ -693,29 +755,43 @@ port.onMessage.addListener((msg) => {
     }
     const now = Date.now();
     let html = '';
-    for (const u of users.slice(0, 30)) {
+    for (const u of users.slice(0, 20)) {
       const uid = u.userId.replace('a:', '').substring(0, 8);
       const agoSec = Math.round((now - u.lastTime) / 1000);
       const agoStr = agoSec >= 60 ? `${Math.floor(agoSec / 60)}分前` : `${agoSec}秒前`;
-      const recentComment = u.comments[u.comments.length - 1] || '';
       const tendencyHtml = u.tendency
         ? `<span class="niko-user-tendency">${escapeHtml(u.tendency)}</span>` : '';
+      const latestComment = u.comments[u.comments.length - 1] || '';
       html += `<div class="niko-user-row">
-        <div class="niko-user-info">
+        <div class="niko-user-info niko-user-toggle" data-uid="${escapeHtml(uid)}">
           <span class="niko-user-id">${uid}</span>
           <span class="niko-user-count">${u.count}件</span>
           ${tendencyHtml}
           <span class="niko-user-ago">${agoStr}</span>
         </div>
-        <div class="niko-user-comments">`;
-      // 直近のコメントを表示（最新が上）
+        <div class="niko-user-latest">
+          <div class="niko-user-comment">${escapeHtml(latestComment)}</div>
+        </div>
+        <div class="niko-user-all-comments" style="display:none;">`;
+      // 全コメントを表示（最新が上）
       for (let i = u.comments.length - 1; i >= 0; i--) {
-        const opacity = i === u.comments.length - 1 ? '1' : '0.5';
-        html += `<div class="niko-user-comment" style="opacity:${opacity}">${escapeHtml(u.comments[i])}</div>`;
+        html += `<div class="niko-user-comment">${escapeHtml(u.comments[i])}</div>`;
       }
       html += `</div></div>`;
     }
     listEl.innerHTML = html;
+    // ユーザー名クリックでコメント一覧を展開/折りたたみ
+    listEl.querySelectorAll('.niko-user-toggle').forEach(el => {
+      el.addEventListener('click', () => {
+        const row = el.closest('.niko-user-row');
+        const latest = row.querySelector('.niko-user-latest');
+        const all = row.querySelector('.niko-user-all-comments');
+        const isOpen = all.style.display !== 'none';
+        latest.style.display = isOpen ? '' : 'none';
+        all.style.display = isOpen ? 'none' : '';
+        row.classList.toggle('niko-user-expanded', !isOpen);
+      });
+    });
     if (statusEl) {
       statusEl.textContent = `${users.length}人 / ${totalComments}コメント（直近5分間）`;
       statusEl.style.color = '#00bcd4';

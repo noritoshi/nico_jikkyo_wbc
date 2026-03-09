@@ -64,6 +64,7 @@
   flex-direction: column;
   align-items: center;
   gap: 6px;
+  /* AIパネルの絶対配置の基準 */
 }
 
 #niko-jikkyo-input-bar:hover,
@@ -222,6 +223,11 @@
   border: 1px solid rgba(233, 69, 96, 0.4);
   border-radius: 12px;
   backdrop-filter: blur(12px);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 6px;
 }
 
 #niko-jikkyo-ai-panel.open {
@@ -491,6 +497,18 @@
   border-bottom: none;
 }
 
+.niko-graph-section {
+  padding-bottom: 4px;
+  max-height: none;
+  overflow: visible;
+}
+
+#niko-comment-graph {
+  width: 100%;
+  height: 60px;
+  display: block;
+}
+
 .niko-side-section-title {
   color: rgba(255, 255, 255, 0.5);
   font-size: 10px;
@@ -548,6 +566,37 @@
   gap: 6px;
   align-items: center;
   margin-bottom: 2px;
+}
+
+.niko-user-toggle {
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 1px 2px;
+  margin: -1px -2px;
+}
+
+.niko-user-toggle:hover {
+  background: rgba(0, 188, 212, 0.1);
+}
+
+.niko-user-expanded {
+  border-left-color: rgba(0, 188, 212, 0.7);
+}
+
+.niko-user-all-comments {
+  max-height: 150px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 188, 212, 0.3) transparent;
+}
+
+.niko-user-all-comments .niko-user-comment {
+  white-space: normal;
+  word-break: break-all;
+  max-width: none;
 }
 
 .niko-user-id {
