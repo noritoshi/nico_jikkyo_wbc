@@ -341,6 +341,7 @@ function createCommentInput() {
       <label>方式:</label>
       <select id="niko-ai-mode">
         <option value="normal">通常コメント</option>
+        <option value="webSearch">Web検索コメント</option>
         <option value="shitaCA" disabled>下積みコメントアート（プレミアム）</option>
       </select>
     </div>
@@ -394,7 +395,10 @@ function createCommentInput() {
     if (!userPrompt) return;
 
     aiGenerating = true;
-    aiStatus.innerHTML = '<span class="niko-ai-loading"></span> AIが思考中...';
+    const isWebSearch = aiModeSelect.value === 'webSearch';
+    aiStatus.innerHTML = isWebSearch
+      ? '<span class="niko-ai-loading"></span> Web検索中...'
+      : '<span class="niko-ai-loading"></span> AIが思考中...';
     aiStatus.style.color = '#ffcc00';
     aiGenerateBtn.textContent = 'キャンセル';
     aiGenerateBtn.classList.add('niko-ai-cancel');

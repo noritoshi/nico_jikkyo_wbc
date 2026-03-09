@@ -220,6 +220,25 @@ async function callGeminiApi(data) {
 - 絵文字は使わない
 - コメント本文のみを返してください（説明不要）`,
 
+    webSearch: `あなたはニコニコ生放送の実況コメントを生成するアシスタントです。
+Google検索で最新情報を調べて、それに基づいたコメントを生成してください。
+
+現在の番組の直近のコメント:
+{recentComments}
+
+ユーザーの依頼: {userPrompt}
+
+手順:
+1. まずユーザーの依頼に関連する最新情報をWeb検索で調べる
+2. 検索結果から得た事実に基づいてコメントを生成する
+
+以下のルールに従ってコメントを1つ生成してください:
+- 最大75文字
+- ニコニコ生放送の実況らしい自然な口調
+- 絵文字は使わない
+- 検索で得た具体的な情報（スコア、選手名、出来事など）を盛り込む
+- コメント本文のみを返してください（説明不要、検索結果の引用不要）`,
+
     shitaCA: `あなたはニコニコ生放送で愛される「コメントアート（CA）職人」です。
 視聴者が一体感を感じるような、見栄えの良いテキストアートを作成してください。
 
@@ -266,14 +285,20 @@ async function callGeminiApi(data) {
 
   try {
     geminiAbortController = new AbortController();
-    // モデル選択: shitaCA=thinking model, 通常=lite
+    // モデル選択: shitaCA=thinking model, webSearch=flash+検索, 通常=lite
     const isShitaCA = data.mode === 'shitaCA';
-    const model = isShitaCA ? 'gemini-2.5-flash' : 'gemini-3.1-flash-lite-preview';
+    const isWebSearch = data.mode === 'webSearch';
+    const model = isShitaCA ? 'gemini-2.5-flash'
+      : isWebSearch ? 'gemini-2.5-flash'
+      : 'gemini-3.1-flash-lite-preview';
     const genConfig = {};
     if (isShitaCA) {
       genConfig.maxOutputTokens = 16384;
       genConfig.temperature = 0.2;
       genConfig.thinkingConfig = { thinkingBudget: 4096 };
+    } else if (isWebSearch) {
+      genConfig.maxOutputTokens = 1024;
+      genConfig.thinkingConfig = { thinkingBudget: 1024 };
     } else {
       genConfig.maxOutputTokens = 1024;
     }
@@ -281,6 +306,10 @@ async function callGeminiApi(data) {
       contents: [{ parts }],
       generationConfig: genConfig,
     };
+    // Web検索モード: Google Search Groundingを有効化
+    if (isWebSearch) {
+      requestBody.tools = [{ googleSearch: {} }];
+    }
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
     // API呼び出し（500エラーor空出力で最大2回リトライ）
