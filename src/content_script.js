@@ -19,36 +19,41 @@ function drawCommentGraph(points) {
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
   const w = canvas.width, h = canvas.height;
-  const pad = { top: 2, bottom: 12, left: 0, right: 0 };
+  const pad = { top: 2, bottom: 12, left: 6, right: 6 };
   const gw = w - pad.left - pad.right;
   const gh = h - pad.top - pad.bottom;
   ctx.clearRect(0, 0, w, h);
   const max = Math.max(...points, 1);
-  // 塗りつぶし
-  ctx.beginPath();
-  ctx.moveTo(pad.left, h - pad.bottom);
-  for (let i = 0; i < points.length; i++) {
-    const x = pad.left + (i / (points.length - 1)) * gw;
-    const y = pad.top + gh - (points[i] / max) * gh;
-    ctx.lineTo(x, y);
+  const n = points.length;
+  if (n === 0) return;
+  // バー設定
+  const gap = 2;
+  const barW = Math.max(2, (gw - gap * (n - 1)) / n);
+  // 棒グラフ描画
+  for (let i = 0; i < n; i++) {
+    const ratio = points[i] / max;
+    const barH = Math.max(ratio > 0 ? 2 : 0, ratio * gh);
+    const x = pad.left + i * (barW + gap);
+    const y = pad.top + gh - barH;
+    // 強度に応じた透明度（0.15〜1.0）
+    const alpha = 0.15 + ratio * 0.85;
+    const r = 2;
+    // 角丸バー
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + barW - r, y);
+    ctx.quadraticCurveTo(x + barW, y, x + barW, y + r);
+    ctx.lineTo(x + barW, y + barH);
+    ctx.lineTo(x, y + barH);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+    ctx.fillStyle = `rgba(34, 211, 238, ${alpha.toFixed(2)})`;
+    ctx.fill();
   }
-  ctx.lineTo(pad.left + gw, h - pad.bottom);
-  ctx.closePath();
-  ctx.fillStyle = 'rgba(0, 188, 212, 0.15)';
-  ctx.fill();
-  // 線
-  ctx.beginPath();
-  for (let i = 0; i < points.length; i++) {
-    const x = pad.left + (i / (points.length - 1)) * gw;
-    const y = pad.top + gh - (points[i] / max) * gh;
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  }
-  ctx.strokeStyle = '#00bcd4';
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
   // 時間軸ラベル
-  ctx.fillStyle = 'rgba(255,255,255,0.35)';
-  ctx.font = '9px sans-serif';
+  ctx.fillStyle = '#475569';
+  ctx.font = '9px SF Mono, Menlo, Consolas, monospace';
   ctx.textAlign = 'center';
   ctx.fillText('-10m', pad.left + 10, h - 1);
   ctx.fillText('-5m', pad.left + gw * 0.5, h - 1);
@@ -361,7 +366,7 @@ function createCommentInput() {
   // AIボタン
   const aiBtn = document.createElement('button');
   aiBtn.id = 'niko-jikkyo-ai-btn';
-  aiBtn.textContent = 'AI';
+  aiBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/><path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/></svg> AI';
   aiBtn.addEventListener('click', () => {
     const panel = document.getElementById('niko-jikkyo-ai-panel');
     if (panel) panel.classList.toggle('open');
@@ -371,7 +376,7 @@ function createCommentInput() {
   // 概要ボタン
   const summaryBtn = document.createElement('button');
   summaryBtn.id = 'niko-jikkyo-summary-btn';
-  summaryBtn.textContent = '実況';
+  summaryBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg> 実況';
   summaryBtn.addEventListener('click', () => {
     const panel = document.getElementById('niko-jikkyo-summary-panel');
     if (panel) {
@@ -386,12 +391,14 @@ function createCommentInput() {
   inputRow.appendChild(summaryBtn);
 
   // コメント非表示トグルボタン
+  const nikoSvgEye = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
+  const nikoSvgEyeOff = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/></svg>';
   const toggleBtn = document.createElement('button');
   toggleBtn.id = 'niko-jikkyo-toggle';
-  toggleBtn.textContent = '非表示';
+  toggleBtn.innerHTML = nikoSvgEye + ' 非表示';
   toggleBtn.addEventListener('click', () => {
     commentsHidden = !commentsHidden;
-    toggleBtn.textContent = commentsHidden ? '表示' : '非表示';
+    toggleBtn.innerHTML = commentsHidden ? (nikoSvgEyeOff + ' 表示') : (nikoSvgEye + ' 非表示');
     toggleBtn.classList.toggle('active', commentsHidden);
     const overlay = document.getElementById('niko-jikkyo-overlay');
     if (overlay) overlay.style.visibility = commentsHidden ? 'hidden' : 'visible';
@@ -433,27 +440,27 @@ function createCommentInput() {
   summaryPanel.id = 'niko-jikkyo-summary-panel';
   summaryPanel.innerHTML = `
     <div class="niko-side-header">
-      <span>実況ダッシュボード</span>
+      <span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>DASHBOARD</span>
       <div class="niko-summary-auto">
         <label><input type="checkbox" id="niko-summary-auto-toggle"> 自動更新</label>
       </div>
     </div>
     <div class="niko-side-section niko-graph-section">
-      <div class="niko-side-section-title">コメント推移</div>
+      <div class="niko-side-section-title">Comment Graph</div>
       <div class="niko-graph-container">
         <canvas id="niko-comment-graph" width="288" height="60"></canvas>
         <div id="niko-graph-tooltip" class="niko-graph-tooltip" style="display:none;"></div>
       </div>
     </div>
     <div class="niko-side-section">
-      <div class="niko-side-section-title">AI概要</div>
+      <div class="niko-side-section-title">AI Summary</div>
       <div id="niko-summary-content" style="display:none;">
         <pre id="niko-summary-text"></pre>
       </div>
       <div id="niko-summary-status">「自動更新」ONで3分間隔で更新</div>
     </div>
     <div class="niko-side-section niko-side-section-grow">
-      <div class="niko-side-section-title">ユーザー一覧</div>
+      <div class="niko-side-section-title">Users</div>
       <div id="niko-user-list"></div>
       <div id="niko-user-status"></div>
     </div>

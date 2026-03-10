@@ -2,93 +2,171 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     body {
-      width: 320px;
-      padding: 16px;
-      font-family: 'Hiragino Kaku Gothic ProN', sans-serif;
+      width: 340px;
+      padding: 24px;
+      font-family: 'Inter', 'Hiragino Kaku Gothic ProN', sans-serif;
       font-size: 14px;
-      background: #1a1a2e;
+      background: #0A0F1C;
       color: #eee;
       margin: 0;
     }
-    h1 {
-      font-size: 16px;
-      margin: 0 0 12px 0;
-      color: #e94560;
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    .logo-icon {
+      font-size: 20px;
+    }
+    .logo h1 {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 20px;
+      font-weight: 700;
+      margin: 0;
+      color: #fff;
+    }
+    .logo .version {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: #64748B;
+      font-weight: 500;
+    }
+    .divider {
+      border: none;
+      height: 1px;
+      background: #1E293B;
+      margin: 20px 0;
+    }
+    .section-label {
+      font-family: 'Inter', sans-serif;
+      font-size: 11px;
+      font-weight: 600;
+      color: #64748B;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      margin-bottom: 12px;
     }
     .field {
-      margin-bottom: 12px;
+      margin-bottom: 14px;
     }
     label {
       display: block;
-      font-size: 12px;
-      color: #aaa;
-      margin-bottom: 4px;
+      font-size: 13px;
+      font-weight: 500;
+      color: #94A3B8;
+      margin-bottom: 6px;
     }
     input[type="text"] {
       width: 100%;
-      padding: 8px;
-      border: 1px solid #333;
-      border-radius: 4px;
-      background: #16213e;
+      padding: 10px 14px;
+      border: none;
+      border-radius: 8px;
+      background: #1E293B;
       color: #eee;
-      font-size: 14px;
+      font-size: 13px;
+      font-family: 'JetBrains Mono', monospace;
       box-sizing: border-box;
+      outline: none;
+      transition: box-shadow 0.2s;
     }
     input[type="text"]::placeholder {
-      color: #666;
+      color: #475569;
+    }
+    input[type="text"]:focus {
+      box-shadow: 0 0 0 2px rgba(233, 69, 96, 0.3);
     }
     .buttons {
       display: flex;
-      gap: 8px;
+      gap: 10px;
     }
     button {
       flex: 1;
-      padding: 8px 12px;
+      padding: 10px 12px;
       border: none;
-      border-radius: 4px;
+      border-radius: 8px;
       font-size: 14px;
       cursor: pointer;
-      font-weight: bold;
+      font-weight: 700;
+      font-family: 'Inter', sans-serif;
+      transition: background 0.2s, opacity 0.2s;
     }
     #btn-connect {
-      background: #e94560;
+      background: #E94560;
       color: #fff;
     }
     #btn-connect:hover {
-      background: #c73e54;
+      background: #d13d55;
     }
     #btn-connect:disabled {
-      background: #555;
+      background: #1E293B;
+      color: #475569;
       cursor: not-allowed;
     }
     #btn-disconnect {
-      background: #333;
-      color: #eee;
+      background: #1E293B;
+      color: #94A3B8;
     }
     #btn-disconnect:hover {
-      background: #444;
+      background: #2a3a52;
     }
     #btn-disconnect:disabled {
-      opacity: 0.5;
+      opacity: 0.4;
       cursor: not-allowed;
     }
     .status {
-      margin-top: 12px;
-      padding: 8px;
-      border-radius: 4px;
+      margin-top: 14px;
+      padding: 10px;
+      border-radius: 8px;
       font-size: 12px;
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 500;
       text-align: center;
     }
-    .status.disconnected { background: #333; color: #888; }
-    .status.connecting { background: #2a2a00; color: #ffcc00; }
-    .status.connected { background: #002a00; color: #00ff66; }
-    .status.error { background: #2a0000; color: #ff4444; }
+    .status.disconnected { background: #0F172A; color: #475569; }
+    .status.connecting { background: rgba(255, 204, 0, 0.08); color: #FFCC00; }
+    .status.connected { background: rgba(34, 211, 238, 0.08); color: #22D3EE; }
+    .status.error { background: rgba(233, 69, 96, 0.08); color: #E94560; }
+    #btn-save-key {
+      background: #1E293B;
+      color: #fff;
+    }
+    #btn-save-key:hover {
+      background: #2a3a52;
+    }
+    .hint {
+      font-size: 11px;
+      color: #64748B;
+      margin-top: 6px;
+    }
+    .hint a {
+      color: #E94560;
+      text-decoration: none;
+    }
+    .hint a:hover {
+      text-decoration: underline;
+    }
+    #key-status {
+      font-size: 12px;
+      font-family: 'JetBrains Mono', monospace;
+      color: #22D3EE;
+      margin-top: 6px;
+      text-align: center;
+    }
   </style>
 </head>
 <body>
-  <h1>Niko Jikkyo</h1>
+  <div class="logo">
+    <span class="logo-icon">📺</span>
+    <h1>Niko Jikkyo</h1>
+    <span class="version">v0.17.0</span>
+  </div>
+
+  <div class="section-label">Connection</div>
 
   <div class="field">
     <label>チャンネルID / 番組ID</label>
@@ -102,19 +180,21 @@
 
   <div id="status" class="status disconnected">未接続</div>
 
-  <hr style="border-color: #333; margin: 16px 0;">
+  <hr class="divider">
+
+  <div class="section-label">AI Settings</div>
 
   <div class="field">
-    <label>Gemini API Key（AI コメント生成用）</label>
+    <label>Gemini API Key</label>
     <input type="text" id="gemini-api-key" placeholder="AIzaSy...">
-    <div style="font-size: 11px; color: #666; margin-top: 4px;">
-      <a href="https://aistudio.google.com/api-keys" target="_blank" style="color: #e94560;">Google AI Studio</a> で取得（無料枠あり）
+    <div class="hint">
+      <a href="https://aistudio.google.com/api-keys" target="_blank">Google AI Studio</a> で取得（無料枠あり）
     </div>
   </div>
   <div class="buttons">
-    <button id="btn-save-key" style="background: #0f3460; color: #eee;">保存</button>
+    <button id="btn-save-key">保存</button>
   </div>
-  <div id="key-status" style="font-size: 12px; color: #888; margin-top: 4px; text-align: center;"></div>
+  <div id="key-status"></div>
 
   <script src="popup.js"></script>
 </body>
