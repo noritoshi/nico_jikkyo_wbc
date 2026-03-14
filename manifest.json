@@ -13,7 +13,8 @@
     "https://*.live.nicovideo.jp/*",
     "https://*.live2.nicovideo.jp/*",
     "https://www.netflix.com/*",
-    "https://generativelanguage.googleapis.com/*"
+    "https://generativelanguage.googleapis.com/*",
+    "https://api.deepgram.com/*"
   ],
   "background": {
     "service_worker": "src/background.js"

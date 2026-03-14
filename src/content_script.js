@@ -8,6 +8,176 @@ let commentsHidden = false;
 let aiGeneratedText = '';
 let aiIsEditing = false;
 let aiGenerating = false;
+let voiceActive = false;
+let voiceAutoPost = true; // true=自動投稿, false=手動入力
+let voiceErrorUntil = 0; // エラー表示中のタイムスタンプ（stopped上書き防止）
+let voiceAudioContext = null;
+let voiceMediaStream = null;
+let voiceScriptProcessor = null;
+
+// WBC 2026 キーワード（Deepgram keywords boost）
+const VOICE_KEYWORDS = [
+  // 侍ジャパン主要選手
+  '大谷翔平:2', '山本由伸:2', '鈴木誠也:2', '吉田正尚:2',
+  '村上宗隆:2', '牧秀悟:2', '源田壮亮:2', '宮城大弥:2',
+  '佐々木朗希:2', '今永昇太:2', 'ダルビッシュ:2', '栗林良吏:2',
+  '甲斐拓也:2', '近藤健介:2', '岡本和真:2', '戸郷翔征:2',
+  // 野球用語
+  'ホームラン:1.5', 'ヒット:1', 'ツーベース:1.5', 'スリーベース:1.5',
+  'ストライク:1', 'ボール:1', 'アウト:1', 'セーフ:1',
+  'フォアボール:1', 'デッドボール:1.5', '三振:1.5',
+  'ダブルプレー:1.5', 'ゲッツー:1.5', 'エラー:1',
+  'ファインプレー:1.5', '犠牲フライ:1.5', '盗塁:1.5',
+  'ピッチャー:1', 'バッター:1', 'キャッチャー:1',
+  'ストレート:1', 'フォーク:1', 'スライダー:1', 'カーブ:1', 'チェンジアップ:1',
+  // WBC・大会用語
+  'WBC:2', 'ワールドベースボールクラシック:2', '侍ジャパン:2',
+  '決勝:1.5', '準決勝:1.5', '予選:1',
+  // 実況・応援表現
+  'ナイスバッティング:1', 'ナイスピッチング:1',
+  'ナイスキャッチ:1', 'すごい:1', 'やばい:1',
+];
+
+const DEFAULT_PLACEHOLDER = 'コメントを入力（Enter で送信）';
+const MIC_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>';
+const MIC_SVG_OFF = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="12" rx="3"/><line x1="4" x2="20" y1="4" y2="20"/></svg>';
+
+function stopVoiceAudio() {
+  stopVoiceBatchSend();
+  if (voiceMediaStream) {
+    voiceMediaStream.getTracks().forEach(t => t.stop());
+    voiceMediaStream = null;
+  }
+  if (voiceScriptProcessor) {
+    try { voiceScriptProcessor.disconnect(); } catch (_) {}
+    voiceScriptProcessor = null;
+  }
+  if (voiceAudioContext) {
+    try { voiceAudioContext.close(); } catch (_) {}
+    voiceAudioContext = null;
+  }
+}
+
+// --- Voice: Deepgram REST API (content_scriptから直接送信) ---
+const V_BASE_DUR = 0.8, V_CPS = 3, V_MAX_LEN = 75;
+
+function vElongateWord(word, dur) {
+  if (dur <= V_BASE_DUR) return word;
+  const m = word.match(/(.*?)(([ーあいうえおアイウエオぁぃぅぇぉァィゥェォっッ])\3*)$/);
+  if (!m) return word;
+  return m[1] + m[3].repeat(m[2].length + Math.round((dur - V_BASE_DUR) * V_CPS));
+}
+
+function vProcessTranscript(transcript, words) {
+  let r = transcript;
+  for (const w of words) {
+    const e = vElongateWord(w.word, w.end - w.start);
+    if (e !== w.word) r = r.replace(w.word, e);
+  }
+  return r.slice(0, V_MAX_LEN).replace(/[。、，．]/g, '').replace(/！/g, '!').replace(/？/g, '?').trim();
+}
+
+function voiceShowError(msg) {
+  voiceActive = false;
+  stopVoiceAudio();
+  voiceErrorUntil = Date.now() + 3000;
+  const micBtn = document.getElementById('niko-jikkyo-mic-btn');
+  const modeBtn = document.getElementById('niko-jikkyo-voice-mode');
+  const input = document.getElementById('niko-jikkyo-input');
+  if (micBtn) { micBtn.classList.remove('active'); micBtn.innerHTML = MIC_SVG + ' 音声'; }
+  if (modeBtn) modeBtn.style.display = 'none';
+  if (input) {
+    input.classList.add('voice-error');
+    input.placeholder = msg;
+    input.value = '';
+    setTimeout(() => { input.placeholder = DEFAULT_PLACEHOLDER; input.classList.remove('voice-error'); }, 3000);
+  }
+}
+
+// --- Voice: Deepgram REST API (バッチ送信方式) ---
+let voiceApiKey = '';
+let voiceSendTimer = null;
+let voiceAudioChunks = []; // PCMバッファ蓄積
+
+const V_SEND_INTERVAL = 2500; // 2.5秒ごとにAPIへ送信
+
+function startVoiceBatchSend(apiKey) {
+  voiceApiKey = apiKey;
+  voiceAudioChunks = [];
+  const input = document.getElementById('niko-jikkyo-input');
+  if (input) input.placeholder = voiceAutoPost ? '音声認識中...' : '音声認識中...（Enterで送信）';
+  console.log('[niko-voice] REST batch mode started');
+
+  voiceSendTimer = setInterval(() => {
+    if (!voiceActive || voiceAudioChunks.length === 0) return;
+    // 蓄積したPCMチャンクを結合して送信
+    const totalLen = voiceAudioChunks.reduce((s, c) => s + c.length, 0);
+    const combined = new Int16Array(totalLen);
+    let offset = 0;
+    for (const chunk of voiceAudioChunks) {
+      combined.set(chunk, offset);
+      offset += chunk.length;
+    }
+    voiceAudioChunks = [];
+    sendAudioToDeepgram(combined.buffer);
+  }, V_SEND_INTERVAL);
+}
+
+function stopVoiceBatchSend() {
+  if (voiceSendTimer) {
+    clearInterval(voiceSendTimer);
+    voiceSendTimer = null;
+  }
+  voiceAudioChunks = [];
+}
+
+async function sendAudioToDeepgram(audioBuffer) {
+  const params = new URLSearchParams({
+    language: 'ja', model: 'nova-3',
+    punctuate: 'true', smart_format: 'true',
+    encoding: 'linear16', sample_rate: '16000', channels: '1',
+  });
+  const url = 'https://api.deepgram.com/v1/listen?' + params.toString();
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Token ' + voiceApiKey,
+        'Content-Type': 'application/octet-stream',
+      },
+      body: audioBuffer,
+    });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      if (res.status === 401 || res.status === 403) {
+        voiceShowError('Deepgram API Keyが無効です');
+        return;
+      }
+      console.warn('[niko-voice] API error:', res.status, errText.substring(0, 200));
+      return;
+    }
+    const json = await res.json();
+    const alt = json.results?.channels?.[0]?.alternatives?.[0];
+    if (!alt) return;
+    let transcript = (alt.transcript || '').trim();
+    if (!transcript) return;
+
+    transcript = vProcessTranscript(transcript, alt.words || []);
+    if (!transcript) return;
+
+    console.log('[niko-voice] Transcript:', transcript);
+    const input = document.getElementById('niko-jikkyo-input');
+    if (voiceAutoPost) {
+      postUserComment(transcript);
+      if (input) input.value = '';
+    } else {
+      if (input) { input.value = transcript; input.focus(); }
+    }
+  } catch (e) {
+    console.warn('[niko-voice] REST error:', e.message);
+  }
+}
+
 function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -209,6 +379,22 @@ function renderComment(commentData) {
 // 現在の装飾設定
 const commentStyle = { color: null, position: null, size: null };
 
+// コメント投稿（装飾設定を適用）
+function postUserComment(text) {
+  myPostedComments.add(text);
+  // サイズ上限（音声入力の長時間セッションで肥大化を防止）
+  if (myPostedComments.size > 100) {
+    const arr = Array.from(myPostedComments);
+    myPostedComments.clear();
+    for (let i = 50; i < arr.length; i++) myPostedComments.add(arr[i]);
+  }
+  const data = { text, isAnonymous: true };
+  if (commentStyle.color) data.color = commentStyle.color;
+  if (commentStyle.size) data.size = commentStyle.size;
+  if (commentStyle.position) data.position = commentStyle.position;
+  chrome.runtime.sendMessage({ type: 'postComment', data });
+}
+
 // コメント入力欄の作成
 function createCommentInput() {
   let bar = document.getElementById('niko-jikkyo-input-bar');
@@ -303,19 +489,13 @@ function createCommentInput() {
   const input = document.createElement('input');
   input.type = 'text';
   input.id = 'niko-jikkyo-input';
-  input.placeholder = 'コメントを入力（Enter で送信）';
+  input.placeholder = DEFAULT_PLACEHOLDER;
   input.maxLength = 75;
 
   input.addEventListener('keydown', (e) => {
     e.stopPropagation();
     if (e.key === 'Enter' && !e.isComposing && input.value.trim()) {
-      const text = input.value.trim();
-      myPostedComments.add(text);
-      const data = { text, isAnonymous: true };
-      if (commentStyle.color) data.color = commentStyle.color;
-      if (commentStyle.size) data.size = commentStyle.size;
-      if (commentStyle.position) data.position = commentStyle.position;
-      chrome.runtime.sendMessage({ type: 'postComment', data });
+      postUserComment(input.value.trim());
       input.value = '';
     }
   });
@@ -362,6 +542,85 @@ function createCommentInput() {
   const inputRow = document.createElement('div');
   inputRow.id = 'niko-jikkyo-input-row';
   inputRow.appendChild(input);
+
+  // マイクボタン（音声入力）
+  const micBtn = document.createElement('button');
+  micBtn.id = 'niko-jikkyo-mic-btn';
+  micBtn.innerHTML = MIC_SVG + ' 音声';
+
+  // 音声モード切替（自動投稿 / 手動入力）
+  const voiceModeBtn = document.createElement('button');
+  voiceModeBtn.id = 'niko-jikkyo-voice-mode';
+  voiceModeBtn.textContent = '自動';
+  voiceModeBtn.title = '自動投稿: 発話完了時に自動でコメント投稿';
+  voiceModeBtn.addEventListener('click', () => {
+    voiceAutoPost = !voiceAutoPost;
+    voiceModeBtn.textContent = voiceAutoPost ? '自動' : '手動';
+    voiceModeBtn.title = voiceAutoPost
+      ? '自動投稿: 発話完了時に自動でコメント投稿'
+      : '手動入力: 入力欄にテキストを入力（Enterで送信）';
+    voiceModeBtn.classList.toggle('manual', !voiceAutoPost);
+  });
+
+  micBtn.addEventListener('click', async () => {
+    voiceActive = !voiceActive;
+    if (voiceActive) {
+      try {
+        // マイクキャプチャ
+        voiceMediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        voiceAudioContext = new AudioContext({ sampleRate: 16000 });
+        const source = voiceAudioContext.createMediaStreamSource(voiceMediaStream);
+        voiceScriptProcessor = voiceAudioContext.createScriptProcessor(4096, 1, 1);
+        source.connect(voiceScriptProcessor);
+        voiceScriptProcessor.connect(voiceAudioContext.destination);
+
+        // Deepgram API Key を取得してREST APIバッチ送信を開始
+        const stored = await chrome.storage.local.get(['deepgramApiKey']);
+        if (!stored.deepgramApiKey) {
+          voiceActive = false;
+          stopVoiceAudio();
+          voiceShowError('Deepgram API Keyが未設定です。ポップアップで設定してください。');
+          return;
+        }
+
+        startVoiceBatchSend(stored.deepgramApiKey);
+
+        // PCM データをバッファに蓄積（定期的にREST APIへ送信）
+        voiceScriptProcessor.onaudioprocess = (e) => {
+          if (!voiceActive) return;
+          const float32 = e.inputBuffer.getChannelData(0);
+          const int16 = new Int16Array(float32.length);
+          for (let i = 0; i < float32.length; i++) {
+            const s = Math.max(-1, Math.min(1, float32[i]));
+            int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+          }
+          voiceAudioChunks.push(int16);
+        };
+
+        micBtn.classList.add('active');
+        micBtn.innerHTML = MIC_SVG_OFF + ' 停止';
+        voiceModeBtn.style.display = '';
+      } catch (err) {
+        console.warn('[niko-voice] getUserMedia failed:', err.name, err.message);
+        voiceActive = false;
+        stopVoiceAudio();
+        voiceShowError(err.name === 'NotAllowedError'
+          ? 'マイクへのアクセスが拒否されました'
+          : 'マイクエラー: ' + err.message);
+      }
+    } else {
+      // 停止
+      stopVoiceAudio();
+      micBtn.classList.remove('active');
+      micBtn.innerHTML = MIC_SVG + ' 音声';
+      voiceModeBtn.style.display = 'none';
+      input.placeholder = DEFAULT_PLACEHOLDER;
+      input.value = '';
+    }
+  });
+  inputRow.appendChild(micBtn);
+  voiceModeBtn.style.display = 'none';
+  inputRow.appendChild(voiceModeBtn);
 
   // AIボタン
   const aiBtn = document.createElement('button');
@@ -709,7 +968,7 @@ port.onMessage.addListener((msg) => {
         input.placeholder = 'ニコニコにログインすると投稿できます';
         input.disabled = true;
         setTimeout(() => {
-          input.placeholder = 'コメントを入力（Enter で送信）';
+          input.placeholder = DEFAULT_PLACEHOLDER;
           input.disabled = false;
         }, 3000);
       }

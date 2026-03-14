@@ -62,29 +62,34 @@ chrome.runtime.onMessage.addListener((msg) => {
   }
 });
 
-// Gemini API Key
-const apiKeyInput = document.getElementById('gemini-api-key');
-const btnSaveKey = document.getElementById('btn-save-key');
-const keyStatus = document.getElementById('key-status');
+// API Key セクションの初期化（共通ヘルパー）
+function setupApiKeySection(inputId, btnId, statusId, storageKey) {
+  const input = document.getElementById(inputId);
+  const btn = document.getElementById(btnId);
+  const status = document.getElementById(statusId);
 
-chrome.storage.local.get(['geminiApiKey'], (result) => {
-  if (result.geminiApiKey) {
-    apiKeyInput.value = result.geminiApiKey;
-    keyStatus.textContent = '保存済み';
-    keyStatus.style.color = '#00ff66';
-  }
-});
+  chrome.storage.local.get([storageKey], (result) => {
+    if (result[storageKey]) {
+      input.value = result[storageKey];
+      status.textContent = '保存済み';
+      status.style.color = '#00ff66';
+    }
+  });
 
-btnSaveKey.addEventListener('click', () => {
-  const key = apiKeyInput.value.trim();
-  if (!key) {
-    chrome.storage.local.remove('geminiApiKey');
-    keyStatus.textContent = '削除しました';
-    keyStatus.style.color = '#888';
-  } else {
-    chrome.storage.local.set({ geminiApiKey: key });
-    keyStatus.textContent = '保存しました';
-    keyStatus.style.color = '#00ff66';
-  }
-  setTimeout(() => { keyStatus.textContent = key ? '保存済み' : ''; }, 2000);
-});
+  btn.addEventListener('click', () => {
+    const key = input.value.trim();
+    if (!key) {
+      chrome.storage.local.remove(storageKey);
+      status.textContent = '削除しました';
+      status.style.color = '#888';
+    } else {
+      chrome.storage.local.set({ [storageKey]: key });
+      status.textContent = '保存しました';
+      status.style.color = '#00ff66';
+    }
+    setTimeout(() => { status.textContent = key ? '保存済み' : ''; }, 2000);
+  });
+}
+
+setupApiKeySection('gemini-api-key', 'btn-save-key', 'key-status', 'geminiApiKey');
+setupApiKeySection('deepgram-api-key', 'btn-save-dg-key', 'dg-key-status', 'deepgramApiKey');

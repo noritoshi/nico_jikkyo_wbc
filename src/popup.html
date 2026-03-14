@@ -150,12 +150,20 @@
     .hint a:hover {
       text-decoration: underline;
     }
-    #key-status {
+    #key-status,
+    #dg-key-status {
       font-size: 12px;
       font-family: 'JetBrains Mono', monospace;
       color: #22D3EE;
       margin-top: 6px;
       text-align: center;
+    }
+    #btn-save-dg-key {
+      background: #1E293B;
+      color: #fff;
+    }
+    #btn-save-dg-key:hover {
+      background: #2a3a52;
     }
   </style>
 </head>
@@ -195,6 +203,22 @@
     <button id="btn-save-key">保存</button>
   </div>
   <div id="key-status"></div>
+
+  <hr class="divider">
+
+  <div class="section-label">Voice Settings</div>
+
+  <div class="field">
+    <label>Deepgram API Key</label>
+    <input type="text" id="deepgram-api-key" placeholder="Token...">
+    <div class="hint">
+      <a href="https://console.deepgram.com/" target="_blank">Deepgram Console</a> で取得（従量課金）
+    </div>
+  </div>
+  <div class="buttons">
+    <button id="btn-save-dg-key">保存</button>
+  </div>
+  <div id="dg-key-status"></div>
 
   <script src="popup.js"></script>
 </body>

@@ -193,7 +193,11 @@
 }
 
 #niko-jikkyo-input::placeholder {
-  color: #475569;
+  color: #64748b;
+}
+
+#niko-jikkyo-input.voice-error::placeholder {
+  color: #f87171;
 }
 
 #niko-jikkyo-input:focus {
@@ -204,6 +208,71 @@
 #niko-jikkyo-input:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* --- Mic Button (Voice Input) --- */
+#niko-jikkyo-mic-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 14px;
+  border: 1px solid rgba(34, 211, 238, 0.4);
+  border-radius: 100px;
+  background: rgba(15, 23, 42, 0.9);
+  color: #94A3B8;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+  cursor: pointer;
+  backdrop-filter: blur(12px);
+  white-space: nowrap;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+
+#niko-jikkyo-mic-btn:hover {
+  background: rgba(34, 211, 238, 0.12);
+  color: #22D3EE;
+}
+
+#niko-jikkyo-mic-btn.active {
+  background: rgba(233, 69, 96, 0.7);
+  color: #fff;
+  border-color: #E94560;
+  animation: niko-mic-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes niko-mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(233, 69, 96, 0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(233, 69, 96, 0); }
+}
+
+/* --- Voice Mode Toggle (Auto/Manual) --- */
+#niko-jikkyo-voice-mode {
+  padding: 5px 10px;
+  border: 1px solid rgba(34, 211, 238, 0.3);
+  border-radius: 100px;
+  background: rgba(34, 211, 238, 0.1);
+  color: #22D3EE;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+
+#niko-jikkyo-voice-mode:hover {
+  background: rgba(34, 211, 238, 0.2);
+}
+
+#niko-jikkyo-voice-mode.manual {
+  background: rgba(255, 204, 0, 0.1);
+  color: #FFCC00;
+  border-color: rgba(255, 204, 0, 0.3);
+}
+
+#niko-jikkyo-voice-mode.manual:hover {
+  background: rgba(255, 204, 0, 0.2);
 }
 
 /* --- AI Button --- */

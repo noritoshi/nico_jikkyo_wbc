@@ -1,6 +1,6 @@
 // offscreen.js — WebSocket接続 + mpn protobufコメント取得
 
-const DEBUG = false; // デバッグログの有効/無効
+const DEBUG = true; // デバッグログの有効/無効（リリース時はfalseに戻す）
 function log(...args) {
   if (!DEBUG) return;
   const msg = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
@@ -15,14 +15,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'connect') {
     startConnection(msg.data);
     sendResponse({ ok: true });
+    return true;
   } else if (msg.type === 'disconnect') {
     closeAll();
     sendResponse({ ok: true });
+    return true;
   } else if (msg.type === 'postComment') {
     postComment(msg.data);
     sendResponse({ ok: true });
+    return true;
   }
-  return true;
+  // voice系メッセージなど、offscreenが処理しないメッセージは無視
+  return false;
 });
 
 function closeAll() {
