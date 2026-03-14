@@ -375,9 +375,22 @@ vposの基準時刻（ISO 8601形式）。
 - content_script からの `fetch` / `XMLHttpRequest` は拡張の `host_permissions` に従い、ページのCSPに制約されない
 - しかし `WebSocket` (wss://) は **ページのCSP (connect-src) に制約される**
 - Netflix上の content_script から `wss://api.deepgram.com` への WebSocket 接続は 1006 (Abnormal Closure) で即座に失敗する
-- offscreen document、background service worker からも同様に失敗（原因は異なる可能性あり）
-- **回避策**: WebSocket の代わりに REST API (`fetch` POST) を使用する（`host_permissions` で許可済みなら動作する）
-- Deepgram の場合: ストリーミング WebSocket API → REST API バッチ送信方式に変更して解決
+- **解決策**: background service worker (Chrome 116+で WebSocket 対応) から接続する
+- 認証: `Sec-WebSocket-Protocol` サブプロトコル方式 (`new WebSocket(url, ['token', apiKey])`) で認証
+  - クエリパラメータの `?token=` 方式は background からも 1006 で失敗した
+- PCM音声データの転送: content_script → background は `port.postMessage({ data: Array.from(int16) })`
+  - Chrome拡張の port.postMessage は Transferable (ArrayBuffer) 非対応のため Array に変換して送信
+  - background側で `new Int16Array(msg.data).buffer` に戻して Deepgram に送信
+
+## Deepgram Nova-3 keytermプロンプティング
+
+- Nova-3 では `keywords` パラメータではなく `keyterm` パラメータを使用
+- 形式: `keyterm=選手名` をURLクエリパラメータに繰り返し追加
+- boost値は指定不可（Nova-2の `keywords=word:3` とは異なる）
+- 上限: 500トークン / リクエスト（keytermが多すぎるとURL長で400エラー）
+- 実用上限: 60件程度（URL長の制約）
+- 同音異義語対策: 「打った」「投げた」等の野球動詞をkeytermに含めると漢字選択が改善される
+- 発話セグメント蓄積: `is_final` セグメントをバッファし `speech_final` で結合して送信（長文の途切れ防止）
 
 ## 参考リソース
 

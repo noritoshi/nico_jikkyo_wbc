@@ -15,32 +15,9 @@ let voiceAudioContext = null;
 let voiceMediaStream = null;
 let voiceScriptProcessor = null;
 
-// WBC 2026 キーワード（Deepgram keywords boost）
-const VOICE_KEYWORDS = [
-  // 侍ジャパン主要選手
-  '大谷翔平:2', '山本由伸:2', '鈴木誠也:2', '吉田正尚:2',
-  '村上宗隆:2', '牧秀悟:2', '源田壮亮:2', '宮城大弥:2',
-  '佐々木朗希:2', '今永昇太:2', 'ダルビッシュ:2', '栗林良吏:2',
-  '甲斐拓也:2', '近藤健介:2', '岡本和真:2', '戸郷翔征:2',
-  // 野球用語
-  'ホームラン:1.5', 'ヒット:1', 'ツーベース:1.5', 'スリーベース:1.5',
-  'ストライク:1', 'ボール:1', 'アウト:1', 'セーフ:1',
-  'フォアボール:1', 'デッドボール:1.5', '三振:1.5',
-  'ダブルプレー:1.5', 'ゲッツー:1.5', 'エラー:1',
-  'ファインプレー:1.5', '犠牲フライ:1.5', '盗塁:1.5',
-  'ピッチャー:1', 'バッター:1', 'キャッチャー:1',
-  'ストレート:1', 'フォーク:1', 'スライダー:1', 'カーブ:1', 'チェンジアップ:1',
-  // WBC・大会用語
-  'WBC:2', 'ワールドベースボールクラシック:2', '侍ジャパン:2',
-  '決勝:1.5', '準決勝:1.5', '予選:1',
-  // 実況・応援表現
-  'ナイスバッティング:1', 'ナイスピッチング:1',
-  'ナイスキャッチ:1', 'すごい:1', 'やばい:1',
-];
-
 const DEFAULT_PLACEHOLDER = 'コメントを入力（Enter で送信）';
 const MIC_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>';
-const MIC_SVG_OFF = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="12" rx="3"/><line x1="4" x2="20" y1="4" y2="20"/></svg>';
+const MIC_SVG_OFF = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="2" x2="22" y1="2" y2="22"/><path d="M18.89 13.23A7.12 7.12 0 0 0 19 12v-2"/><path d="M5 10v2a7 7 0 0 0 12 5"/><path d="M15 9.34V5a3 3 0 0 0-5.68-1.33"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12"/><line x1="12" x2="12" y1="19" y2="22"/></svg>';
 
 function stopVoiceAudio() {
   if (voiceMediaStream) {
@@ -872,8 +849,9 @@ port.onMessage.addListener((msg) => {
     handleVoiceResult(msg.transcript, msg.words || []);
     return;
   }
-  // 音声認識ステータス
+  // 音声認識ステータス（エラー表示中は上書きしない）
   if (msg.type === 'voiceStatus') {
+    if (Date.now() < voiceErrorUntil) return;
     const input = document.getElementById('niko-jikkyo-input');
     if (msg.status === 'connected' && input) {
       input.placeholder = voiceAutoPost ? '音声認識中...' : '音声認識中...（Enterで送信）';

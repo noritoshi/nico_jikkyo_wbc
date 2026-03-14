@@ -93,3 +93,85 @@ function setupApiKeySection(inputId, btnId, statusId, storageKey) {
 
 setupApiKeySection('gemini-api-key', 'btn-save-key', 'key-status', 'geminiApiKey');
 setupApiKeySection('deepgram-api-key', 'btn-save-dg-key', 'dg-key-status', 'deepgramApiKey');
+
+// 音声認識キーワード（選手名取得）
+const teamAInput = document.getElementById('team-a');
+const teamBInput = document.getElementById('team-b');
+const btnFetch = document.getElementById('btn-fetch-keyterms');
+const btnClear = document.getElementById('btn-clear-keyterms');
+const keytermStatus = document.getElementById('keyterm-status');
+const keytermList = document.getElementById('keyterm-list');
+
+// 野球用語（baseKeytermsと同じリスト — タグ表示の色分け用）
+const BASE_KEYTERMS = new Set([
+  'ホームラン', 'ツーベース', 'スリーベース', 'フォアボール', 'デッドボール',
+  '三振', 'ダブルプレー', 'ゲッツー', 'ファインプレー', '犠牲フライ', '盗塁',
+  'ストレート', 'フォーク', 'スライダー', 'カーブ', 'チェンジアップ',
+  'WBC', '侍ジャパン',
+]);
+
+function renderKeyterms(keyterms) {
+  if (!keyterms || keyterms.length === 0) {
+    keytermList.innerHTML = '';
+    btnClear.style.display = 'none';
+    return;
+  }
+  btnClear.style.display = '';
+  keytermList.innerHTML = keyterms.map(kt => {
+    const cls = BASE_KEYTERMS.has(kt) ? 'keyterm-tag base' : 'keyterm-tag';
+    return `<span class="${cls}">${kt}</span>`;
+  }).join('');
+}
+
+// 前回の入力を復元
+chrome.storage.local.get(['voiceTeamA', 'voiceTeamB', 'voiceKeyterms'], (result) => {
+  if (result.voiceTeamA) teamAInput.value = result.voiceTeamA;
+  if (result.voiceTeamB) teamBInput.value = result.voiceTeamB;
+  if (result.voiceKeyterms && result.voiceKeyterms.length > 0) {
+    keytermStatus.textContent = `${result.voiceKeyterms.length}件のキーワード設定済み`;
+    keytermStatus.style.color = '#00ff66';
+    renderKeyterms(result.voiceKeyterms);
+  }
+});
+
+btnFetch.addEventListener('click', () => {
+  const teamA = teamAInput.value.trim();
+  const teamB = teamBInput.value.trim();
+  if (!teamA || !teamB) {
+    keytermStatus.textContent = '2チーム名を入力してください';
+    keytermStatus.style.color = '#E94560';
+    return;
+  }
+
+  btnFetch.disabled = true;
+  keytermStatus.textContent = 'AIが選手情報を検索中...';
+  keytermStatus.style.color = '#FFCC00';
+  keytermList.innerHTML = '';
+
+  // チーム名を保存
+  chrome.storage.local.set({ voiceTeamA: teamA, voiceTeamB: teamB });
+
+  chrome.runtime.sendMessage({
+    type: 'fetchVoiceKeyterms',
+    teamA, teamB
+  }, (res) => {
+    btnFetch.disabled = false;
+    if (res && res.error) {
+      keytermStatus.textContent = res.error;
+      keytermStatus.style.color = '#E94560';
+    } else if (res && res.keyterms) {
+      keytermStatus.textContent = `${res.keyterms.length}件のキーワードを設定しました`;
+      keytermStatus.style.color = '#00ff66';
+      renderKeyterms(res.keyterms);
+    }
+  });
+});
+
+btnClear.addEventListener('click', () => {
+  chrome.storage.local.remove(['voiceKeyterms']);
+  keytermList.innerHTML = '';
+  btnClear.style.display = 'none';
+  keytermStatus.textContent = 'キーワードをクリアしました';
+  keytermStatus.style.color = '#64748B';
+  setTimeout(() => { keytermStatus.textContent = ''; }, 2000);
+});

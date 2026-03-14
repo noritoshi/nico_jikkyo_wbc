@@ -151,19 +151,62 @@
       text-decoration: underline;
     }
     #key-status,
-    #dg-key-status {
+    #dg-key-status,
+    #keyterm-status {
       font-size: 12px;
       font-family: 'JetBrains Mono', monospace;
       color: #22D3EE;
       margin-top: 6px;
       text-align: center;
     }
-    #btn-save-dg-key {
+    #btn-save-dg-key,
+    #btn-fetch-keyterms {
       background: #1E293B;
       color: #fff;
     }
-    #btn-save-dg-key:hover {
+    #btn-save-dg-key:hover,
+    #btn-fetch-keyterms:hover {
       background: #2a3a52;
+    }
+    #btn-fetch-keyterms:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    #btn-clear-keyterms {
+      background: transparent;
+      color: #64748B;
+      flex: 0 0 auto;
+      padding: 10px 14px;
+    }
+    #btn-clear-keyterms:hover {
+      color: #E94560;
+    }
+    #keyterm-list {
+      margin-top: 8px;
+      max-height: 160px;
+      overflow-y: auto;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    #keyterm-list::-webkit-scrollbar {
+      width: 4px;
+    }
+    #keyterm-list::-webkit-scrollbar-thumb {
+      background: #1E293B;
+      border-radius: 2px;
+    }
+    .keyterm-tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: #1E293B;
+      color: #94A3B8;
+      font-size: 11px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .keyterm-tag.base {
+      color: #64748B;
     }
   </style>
 </head>
@@ -219,6 +262,21 @@
     <button id="btn-save-dg-key">保存</button>
   </div>
   <div id="dg-key-status"></div>
+
+  <div class="field" style="margin-top: 14px;">
+    <label>音声認識キーワード（選手名を自動取得）</label>
+    <div style="display: flex; gap: 8px;">
+      <input type="text" id="team-a" placeholder="チーム名（例: 日本）" style="flex:1;">
+      <input type="text" id="team-b" placeholder="チーム名（例: アメリカ）" style="flex:1;">
+    </div>
+    <div class="hint">対戦する2チームを入力して選手名をAIで取得</div>
+  </div>
+  <div class="buttons">
+    <button id="btn-fetch-keyterms">選手取得</button>
+    <button id="btn-clear-keyterms" style="display:none;">クリア</button>
+  </div>
+  <div id="keyterm-status"></div>
+  <div id="keyterm-list"></div>
 
   <script src="popup.js"></script>
 </body>

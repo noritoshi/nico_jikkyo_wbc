@@ -1,6 +1,6 @@
 // background.js — Service Worker: ニコニコAPIへの接続管理とコメント転送
 
-const DEBUG = true; // デバッグログの有効/無効（リリース時はfalseに戻す）
+const DEBUG = false; // デバッグログの有効/無効（リリース時はfalseに戻す）
 function debugLog(...args) { if (DEBUG) console.log(...args); }
 
 let currentStatus = 'disconnected';
@@ -94,9 +94,7 @@ async function connect(channelId) {
     }).catch(() => {});
 
     // content_scriptにプレミアム情報を通知
-    for (const port of contentPorts) {
-      try { port.postMessage({ type: 'premiumStatus', isPremium: watchData.isPremium }); } catch (e) {}
-    }
+    broadcastToContent({ type: 'premiumStatus', isPremium: watchData.isPremium });
 
     // 接続情報を保存
     await chrome.storage.local.set({
@@ -146,6 +144,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // 音声認識キーワード取得（選手名をAI検索）
+  if (msg.type === 'fetchVoiceKeyterms') {
+    fetchVoiceKeyterms(msg.teamA, msg.teamB).then(sendResponse);
+    return true;
+  }
+
   // AI生成キャンセル
   if (msg.type === 'cancelAiComment') {
     if (geminiAbortController) geminiAbortController.abort();
@@ -155,10 +159,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // AI コメント生成リクエスト
   if (msg.type === 'generateAiComment') {
     callGeminiApi(msg.data).then((result) => {
-      // リクエスト元のport（content_script）に返す
-      for (const port of contentPorts) {
-        try { port.postMessage({ type: 'aiCommentResult', data: result }); } catch (e) {}
-      }
+      broadcastToContent({ type: 'aiCommentResult', data: result });
     });
     return;
   }
@@ -181,9 +182,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   // offscreenからの投稿結果 → content_scriptに転送
   if (msg.type === 'postCommentResult') {
-    for (const port of contentPorts) {
-      try { port.postMessage({ type: 'postCommentResult', data: msg.data }); } catch (e) {}
-    }
+    broadcastToContent({ type: 'postCommentResult', data: msg.data });
     return;
   }
 
@@ -197,9 +196,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     recordCommentBucket();
     pruneCommentLog();
     // content_scriptへの転送はtext,mailのみ（既存の描画に影響なし）
-    for (const port of contentPorts) {
-      try { port.postMessage({ text: msg.data.text, mail: msg.data.mail }); } catch (e) {}
-    }
+    broadcastToContent({ text: msg.data.text, mail: msg.data.mail });
     return;
   }
 
@@ -216,18 +213,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // 概要の手動取得
   if (msg.type === 'generateSummary') {
     generateSummary().then((result) => {
-      for (const port of contentPorts) {
-        try { port.postMessage({ type: 'summaryResult', data: result }); } catch (e) {}
-      }
+      broadcastToContent({ type: 'summaryResult', data: result });
     });
     return;
   }
 
   // 概要履歴リクエスト（グラフホバー用）
   if (msg.type === 'getSummaryHistory') {
-    for (const port of contentPorts) {
-      try { port.postMessage({ type: 'summaryHistoryResult', data: summaryHistory }); } catch (e) {}
-    }
+    broadcastToContent({ type: 'summaryHistoryResult', data: summaryHistory });
     return;
   }
 
@@ -236,41 +229,135 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const points = getGraphData();
     const total = points.reduce((a, b) => a + b, 0);
     console.log('[bg] getCommentGraph: buckets=' + commentBuckets.length + ' total=' + total);
-    for (const port of contentPorts) {
-      try { port.postMessage({ type: 'commentGraphResult', data: points }); } catch (e) {}
-    }
+    broadcastToContent({ type: 'commentGraphResult', data: points });
     return;
   }
 
   // ユーザー一覧リクエスト
   if (msg.type === 'getUserList') {
-    const userList = buildUserList();
-    for (const port of contentPorts) {
-      try { port.postMessage({ type: 'userListResult', data: userList }); } catch (e) {}
-    }
+    broadcastToContent({ type: 'userListResult', data: buildUserList() });
     return;
   }
 
 });
 
-// ============================================================
-// 音声入力: Deepgram WebSocket (background service worker)
-// ============================================================
-let deepgramWs = null;
-
-function sendVoiceToContent(msg) {
+// content_scriptへのブロードキャスト（全ポートに送信）
+function broadcastToContent(msg) {
   for (const port of contentPorts) {
     try { port.postMessage(msg); } catch (e) {}
   }
 }
 
+// ============================================================
+// 音声認識キーワード: Gemini Web検索で選手名を取得
+// ============================================================
+async function fetchVoiceKeyterms(teamA, teamB) {
+  const result = await chrome.storage.local.get(['geminiApiKey']);
+  const apiKey = result.geminiApiKey;
+  if (!apiKey) {
+    return { error: 'Gemini API Keyが未設定です' };
+  }
+
+  const today = new Date().toISOString().split('T')[0];
+  const prompt = `${today}時点のWBC (World Baseball Classic) 2026の情報を検索してください。
+
+「${teamA}」と「${teamB}」の対戦について:
+- 両チームの出場登録選手のうち、主要選手（スタメン・主力投手）を中心に最大40名をリストアップ
+- 監督は含める。コーチは不要
+- 日本人選手は「姓 名」（漢字）で出力（例: 大谷翔平）
+- 外国人選手は「姓 名」（カタカナ）で出力（例: マイク・トラウト）
+- 重複なし
+
+以下のJSON形式のみを出力してください。説明不要。
+\`\`\`json
+{"keyterms": ["選手名1", "選手名2", ...]}
+\`\`\``;
+
+  try {
+    const model = 'gemini-2.5-flash';
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    const res = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        tools: [{ googleSearch: {} }],
+        generationConfig: { maxOutputTokens: 4096, thinkingConfig: { thinkingBudget: 2048 } },
+      }),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      return { error: `API エラー (${res.status}): ${errText.substring(0, 80)}` };
+    }
+
+    const json = await res.json();
+    const resParts = json.candidates?.[0]?.content?.parts || [];
+    let text = resParts.filter(p => !p.thought).map(p => p.text).join('');
+
+    const jsonMatch = text.match(/```json\s*\n?([\s\S]*?)```/);
+    if (!jsonMatch) {
+      return { error: '選手情報の解析に失敗しました' };
+    }
+
+    const parsed = JSON.parse(jsonMatch[1].trim());
+    const keyterms = parsed.keyterms || [];
+    if (keyterms.length === 0) {
+      return { error: '選手情報が見つかりませんでした' };
+    }
+
+    // フルネームから姓だけも追加（「トーバー」単体でも認識させる）
+    const surnames = [];
+    for (const name of keyterms) {
+      if (name.includes('・')) {
+        // カタカナ名: 「エセキエル・トーバー」→「トーバー」
+        const parts = name.split('・');
+        const surname = parts[parts.length - 1];
+        if (surname.length >= 3) surnames.push(surname);
+      } else if (/^[\u4e00-\u9fff]/.test(name) && name.length >= 4) {
+        // 漢字名: 「大谷翔平」→「大谷」(先頭2-3文字が姓の場合が多いが曖昧なので省略)
+      }
+    }
+
+    // 野球用語・誤変換されやすい野球表現も追加
+    const baseKeyterms = [
+      'ホームラン', 'ツーベース', 'スリーベース', 'フォアボール', 'デッドボール',
+      '三振', 'ダブルプレー', 'ゲッツー', 'ファインプレー', '犠牲フライ', '盗塁',
+      'ストレート', 'フォーク', 'スライダー', 'カーブ', 'チェンジアップ',
+      'WBC', '侍ジャパン',
+      // 同音異義語で誤変換されやすい野球動詞・表現
+      '打った', '打って', '打てる', '打てない', '打席', '打線', '打率',
+      '投げた', '投げて', '投げる', '投手', '投球',
+      '振った', '振って', '振れる', '空振り',
+      '抑えた', '抑えて', '抑える', '押さえ',
+      '走った', '走って', '走塁',
+      '守った', '守って', '守備',
+      '刺した', '刺して', '牽制',
+    ];
+    // 重複排除
+    const allKeyterms = [...new Set([...keyterms, ...surnames, ...baseKeyterms])];
+
+    await chrome.storage.local.set({ voiceKeyterms: allKeyterms });
+    debugLog('[bg] Voice keyterms saved:', allKeyterms.length, 'items');
+    return { keyterms: allKeyterms };
+  } catch (e) {
+    return { error: `通信エラー: ${e.message}` };
+  }
+}
+
+// ============================================================
+// 音声入力: Deepgram WebSocket (background service worker)
+// ============================================================
+let deepgramWs = null;
+let deepgramAccum = { texts: [], words: [] }; // is_final蓄積バッファ
+
 async function startDeepgram() {
   if (deepgramWs) stopDeepgram();
 
-  const stored = await chrome.storage.local.get(['deepgramApiKey']);
+  const stored = await chrome.storage.local.get(['deepgramApiKey', 'voiceKeyterms']);
   const apiKey = stored.deepgramApiKey;
   if (!apiKey) {
-    sendVoiceToContent({ type: 'voiceError', message: 'Deepgram API Keyが未設定です。ポップアップで設定してください。' });
+    broadcastToContent({ type: 'voiceError', message: 'Deepgram API Keyが未設定です。ポップアップで設定してください。' });
     return;
   }
 
@@ -279,6 +366,11 @@ async function startDeepgram() {
     punctuate: 'true', smart_format: 'true', endpointing: '800',
     interim_results: 'true', encoding: 'linear16', sample_rate: '16000', channels: '1',
   });
+  // 保存済みキーワード（選手名等）をkeytermとして追加（URL長制限のため最大60件）
+  const keyterms = (stored.voiceKeyterms || []).slice(0, 60);
+  for (const kt of keyterms) {
+    params.append('keyterm', kt);
+  }
   const url = 'wss://api.deepgram.com/v1/listen?' + params.toString();
 
   debugLog('[bg-voice] Connecting to Deepgram via subprotocol auth');
@@ -286,13 +378,14 @@ async function startDeepgram() {
     deepgramWs = new WebSocket(url, ['token', apiKey]);
   } catch (e) {
     debugLog('[bg-voice] WebSocket constructor error:', e.message);
-    sendVoiceToContent({ type: 'voiceError', message: '音声認識の接続に失敗しました' });
+    broadcastToContent({ type: 'voiceError', message: '音声認識の接続に失敗しました' });
     return;
   }
 
   deepgramWs.onopen = () => {
     debugLog('[bg-voice] Deepgram connected');
-    sendVoiceToContent({ type: 'voiceStatus', status: 'connected' });
+    deepgramAccum = { texts: [], words: [] };
+    broadcastToContent({ type: 'voiceStatus', status: 'connected' });
   };
 
   deepgramWs.onmessage = (event) => {
@@ -305,10 +398,24 @@ async function startDeepgram() {
       const isFinal = result.is_final === true;
       const speechFinal = result.speech_final === true;
 
-      if (isFinal && speechFinal && transcript) {
-        sendVoiceToContent({ type: 'voiceTranscript', transcript, words: alt.words || [] });
+      if (isFinal && transcript) {
+        // is_finalセグメントを蓄積
+        deepgramAccum.texts.push(transcript);
+        deepgramAccum.words.push(...(alt.words || []));
+      }
+
+      if (speechFinal) {
+        // 発話完了: 蓄積した全セグメントを結合して送信
+        const fullTranscript = deepgramAccum.texts.join('');
+        const allWords = deepgramAccum.words;
+        deepgramAccum = { texts: [], words: [] };
+        if (fullTranscript) {
+          broadcastToContent({ type: 'voiceTranscript', transcript: fullTranscript, words: allWords });
+        }
       } else if (transcript) {
-        sendVoiceToContent({ type: 'voiceStatus', status: 'interim', text: transcript });
+        // interim: 蓄積分 + 現在のinterimを結合して表示
+        const interimText = deepgramAccum.texts.join('') + (isFinal ? '' : transcript);
+        broadcastToContent({ type: 'voiceStatus', status: 'interim', text: interimText });
       }
     } catch (e) {
       debugLog('[bg-voice] Parse error:', e.message);
@@ -323,9 +430,9 @@ async function startDeepgram() {
     debugLog('[bg-voice] Closed, code=' + event.code, 'reason=' + event.reason);
     deepgramWs = null;
     if (event.code === 1008 || event.code === 4001 || event.code === 4003) {
-      sendVoiceToContent({ type: 'voiceError', message: 'Deepgram API Keyが無効です' });
+      broadcastToContent({ type: 'voiceError', message: 'Deepgram API Keyが無効です' });
     } else if (event.code !== 1000) {
-      sendVoiceToContent({ type: 'voiceError', message: '音声認識の接続に失敗しました (code=' + event.code + ')' });
+      broadcastToContent({ type: 'voiceError', message: '音声認識の接続に失敗しました (code=' + event.code + ')' });
     }
   };
 }
@@ -733,15 +840,11 @@ async function runAutoSummary() {
   if (summaryAbortController) summaryAbortController.abort();
 
   // まずステータスを送信
-  for (const port of contentPorts) {
-    try { port.postMessage({ type: 'summaryStatus', data: 'generating' }); } catch (e) {}
-  }
+  broadcastToContent({ type: 'summaryStatus', data: 'generating' });
 
   const result = await generateSummary();
   if (result.cancelled) return; // 自動更新OFF等でキャンセルされた場合
-  for (const port of contentPorts) {
-    try { port.postMessage({ type: 'summaryResult', data: result }); } catch (e) {}
-  }
+  broadcastToContent({ type: 'summaryResult', data: result });
 }
 
 // ユーザー一覧を構築（コメントログから集計 + AI傾向キャッシュをマージ）
