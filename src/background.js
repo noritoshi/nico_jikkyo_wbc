@@ -1,6 +1,6 @@
 // background.js — Service Worker: ニコニコAPIへの接続管理とコメント転送
 
-const DEBUG = false; // デバッグログの有効/無効（リリース時はfalseに戻す）
+const DEBUG = true; // デバッグログの有効/無効（リリース時はfalseに戻す）
 function debugLog(...args) { if (DEBUG) console.log(...args); }
 
 let currentStatus = 'disconnected';
@@ -252,7 +252,95 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
 });
-  // 音声入力は content_script から直接 Deepgram WebSocket に接続（background不要）
+
+// ============================================================
+// 音声入力: Deepgram WebSocket (background service worker)
+// ============================================================
+let deepgramWs = null;
+
+function sendVoiceToContent(msg) {
+  for (const port of contentPorts) {
+    try { port.postMessage(msg); } catch (e) {}
+  }
+}
+
+async function startDeepgram() {
+  if (deepgramWs) stopDeepgram();
+
+  const stored = await chrome.storage.local.get(['deepgramApiKey']);
+  const apiKey = stored.deepgramApiKey;
+  if (!apiKey) {
+    sendVoiceToContent({ type: 'voiceError', message: 'Deepgram API Keyが未設定です。ポップアップで設定してください。' });
+    return;
+  }
+
+  const params = new URLSearchParams({
+    language: 'ja', model: 'nova-3',
+    punctuate: 'true', smart_format: 'true', endpointing: '800',
+    interim_results: 'true', encoding: 'linear16', sample_rate: '16000', channels: '1',
+  });
+  const url = 'wss://api.deepgram.com/v1/listen?' + params.toString();
+
+  debugLog('[bg-voice] Connecting to Deepgram via subprotocol auth');
+  try {
+    deepgramWs = new WebSocket(url, ['token', apiKey]);
+  } catch (e) {
+    debugLog('[bg-voice] WebSocket constructor error:', e.message);
+    sendVoiceToContent({ type: 'voiceError', message: '音声認識の接続に失敗しました' });
+    return;
+  }
+
+  deepgramWs.onopen = () => {
+    debugLog('[bg-voice] Deepgram connected');
+    sendVoiceToContent({ type: 'voiceStatus', status: 'connected' });
+  };
+
+  deepgramWs.onmessage = (event) => {
+    try {
+      const result = JSON.parse(event.data);
+      if (result.type !== 'Results') return;
+      const alt = result.channel?.alternatives?.[0];
+      if (!alt) return;
+      const transcript = (alt.transcript || '').trim();
+      const isFinal = result.is_final === true;
+      const speechFinal = result.speech_final === true;
+
+      if (isFinal && speechFinal && transcript) {
+        sendVoiceToContent({ type: 'voiceTranscript', transcript, words: alt.words || [] });
+      } else if (transcript) {
+        sendVoiceToContent({ type: 'voiceStatus', status: 'interim', text: transcript });
+      }
+    } catch (e) {
+      debugLog('[bg-voice] Parse error:', e.message);
+    }
+  };
+
+  deepgramWs.onerror = () => {
+    debugLog('[bg-voice] WebSocket error');
+  };
+
+  deepgramWs.onclose = (event) => {
+    debugLog('[bg-voice] Closed, code=' + event.code, 'reason=' + event.reason);
+    deepgramWs = null;
+    if (event.code === 1008 || event.code === 4001 || event.code === 4003) {
+      sendVoiceToContent({ type: 'voiceError', message: 'Deepgram API Keyが無効です' });
+    } else if (event.code !== 1000) {
+      sendVoiceToContent({ type: 'voiceError', message: '音声認識の接続に失敗しました (code=' + event.code + ')' });
+    }
+  };
+}
+
+function stopDeepgram() {
+  if (deepgramWs) {
+    try {
+      if (deepgramWs.readyState === WebSocket.OPEN) {
+        deepgramWs.send(JSON.stringify({ type: 'CloseStream' }));
+      }
+      deepgramWs.close();
+    } catch (_) {}
+    deepgramWs = null;
+  }
+}
 
 // Gemini API呼び出し
 let geminiAbortController = null;
@@ -685,6 +773,22 @@ const contentPorts = new Set();
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name === 'niko-jikkyo') {
     contentPorts.add(port);
-    port.onDisconnect.addListener(() => contentPorts.delete(port));
+    port.onDisconnect.addListener(() => {
+      contentPorts.delete(port);
+      // port切断時に音声も停止
+      if (contentPorts.size === 0) stopDeepgram();
+    });
+    // content_scriptからのport メッセージ（音声データなど）
+    port.onMessage.addListener((msg) => {
+      if (msg.type === 'voiceStart') {
+        startDeepgram();
+      } else if (msg.type === 'voiceAudio') {
+        if (deepgramWs && deepgramWs.readyState === WebSocket.OPEN && msg.data) {
+          deepgramWs.send(new Int16Array(msg.data).buffer);
+        }
+      } else if (msg.type === 'voiceStop') {
+        stopDeepgram();
+      }
+    });
   }
 });

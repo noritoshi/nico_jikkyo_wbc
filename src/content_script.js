@@ -43,7 +43,6 @@ const MIC_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" str
 const MIC_SVG_OFF = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="12" rx="3"/><line x1="4" x2="20" y1="4" y2="20"/></svg>';
 
 function stopVoiceAudio() {
-  stopVoiceBatchSend();
   if (voiceMediaStream) {
     voiceMediaStream.getTracks().forEach(t => t.stop());
     voiceMediaStream = null;
@@ -94,87 +93,18 @@ function voiceShowError(msg) {
   }
 }
 
-// --- Voice: Deepgram REST API (バッチ送信方式) ---
-let voiceApiKey = '';
-let voiceSendTimer = null;
-let voiceAudioChunks = []; // PCMバッファ蓄積
+// 音声認識結果の処理（backgroundから受信）
+function handleVoiceResult(transcript, words) {
+  let processed = vProcessTranscript(transcript, words);
+  if (!processed) return;
 
-const V_SEND_INTERVAL = 2500; // 2.5秒ごとにAPIへ送信
-
-function startVoiceBatchSend(apiKey) {
-  voiceApiKey = apiKey;
-  voiceAudioChunks = [];
+  console.log('[niko-voice] Transcript:', processed);
   const input = document.getElementById('niko-jikkyo-input');
-  if (input) input.placeholder = voiceAutoPost ? '音声認識中...' : '音声認識中...（Enterで送信）';
-  console.log('[niko-voice] REST batch mode started');
-
-  voiceSendTimer = setInterval(() => {
-    if (!voiceActive || voiceAudioChunks.length === 0) return;
-    // 蓄積したPCMチャンクを結合して送信
-    const totalLen = voiceAudioChunks.reduce((s, c) => s + c.length, 0);
-    const combined = new Int16Array(totalLen);
-    let offset = 0;
-    for (const chunk of voiceAudioChunks) {
-      combined.set(chunk, offset);
-      offset += chunk.length;
-    }
-    voiceAudioChunks = [];
-    sendAudioToDeepgram(combined.buffer);
-  }, V_SEND_INTERVAL);
-}
-
-function stopVoiceBatchSend() {
-  if (voiceSendTimer) {
-    clearInterval(voiceSendTimer);
-    voiceSendTimer = null;
-  }
-  voiceAudioChunks = [];
-}
-
-async function sendAudioToDeepgram(audioBuffer) {
-  const params = new URLSearchParams({
-    language: 'ja', model: 'nova-3',
-    punctuate: 'true', smart_format: 'true',
-    encoding: 'linear16', sample_rate: '16000', channels: '1',
-  });
-  const url = 'https://api.deepgram.com/v1/listen?' + params.toString();
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Token ' + voiceApiKey,
-        'Content-Type': 'application/octet-stream',
-      },
-      body: audioBuffer,
-    });
-    if (!res.ok) {
-      const errText = await res.text().catch(() => '');
-      if (res.status === 401 || res.status === 403) {
-        voiceShowError('Deepgram API Keyが無効です');
-        return;
-      }
-      console.warn('[niko-voice] API error:', res.status, errText.substring(0, 200));
-      return;
-    }
-    const json = await res.json();
-    const alt = json.results?.channels?.[0]?.alternatives?.[0];
-    if (!alt) return;
-    let transcript = (alt.transcript || '').trim();
-    if (!transcript) return;
-
-    transcript = vProcessTranscript(transcript, alt.words || []);
-    if (!transcript) return;
-
-    console.log('[niko-voice] Transcript:', transcript);
-    const input = document.getElementById('niko-jikkyo-input');
-    if (voiceAutoPost) {
-      postUserComment(transcript);
-      if (input) input.value = '';
-    } else {
-      if (input) { input.value = transcript; input.focus(); }
-    }
-  } catch (e) {
-    console.warn('[niko-voice] REST error:', e.message);
+  if (voiceAutoPost) {
+    postUserComment(processed);
+    if (input) input.value = '';
+  } else {
+    if (input) { input.value = processed; input.focus(); }
   }
 }
 
@@ -574,18 +504,10 @@ function createCommentInput() {
         source.connect(voiceScriptProcessor);
         voiceScriptProcessor.connect(voiceAudioContext.destination);
 
-        // Deepgram API Key を取得してREST APIバッチ送信を開始
-        const stored = await chrome.storage.local.get(['deepgramApiKey']);
-        if (!stored.deepgramApiKey) {
-          voiceActive = false;
-          stopVoiceAudio();
-          voiceShowError('Deepgram API Keyが未設定です。ポップアップで設定してください。');
-          return;
-        }
+        // backgroundにvoiceStart送信 → Deepgram WebSocket接続
+        port.postMessage({ type: 'voiceStart' });
 
-        startVoiceBatchSend(stored.deepgramApiKey);
-
-        // PCM データをバッファに蓄積（定期的にREST APIへ送信）
+        // PCM データをbackgroundへストリーミング送信
         voiceScriptProcessor.onaudioprocess = (e) => {
           if (!voiceActive) return;
           const float32 = e.inputBuffer.getChannelData(0);
@@ -594,7 +516,7 @@ function createCommentInput() {
             const s = Math.max(-1, Math.min(1, float32[i]));
             int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
           }
-          voiceAudioChunks.push(int16);
+          port.postMessage({ type: 'voiceAudio', data: Array.from(int16) });
         };
 
         micBtn.classList.add('active');
@@ -610,6 +532,7 @@ function createCommentInput() {
       }
     } else {
       // 停止
+      port.postMessage({ type: 'voiceStop' });
       stopVoiceAudio();
       micBtn.classList.remove('active');
       micBtn.innerHTML = MIC_SVG + ' 音声';
@@ -944,6 +867,26 @@ chrome.storage.local.get(['isPremium'], (result) => {
 // backgroundからのコメント受信（port接続方式）
 const port = chrome.runtime.connect({ name: 'niko-jikkyo' });
 port.onMessage.addListener((msg) => {
+  // 音声認識結果
+  if (msg.type === 'voiceTranscript') {
+    handleVoiceResult(msg.transcript, msg.words || []);
+    return;
+  }
+  // 音声認識ステータス
+  if (msg.type === 'voiceStatus') {
+    const input = document.getElementById('niko-jikkyo-input');
+    if (msg.status === 'connected' && input) {
+      input.placeholder = voiceAutoPost ? '音声認識中...' : '音声認識中...（Enterで送信）';
+    } else if (msg.status === 'interim' && input && msg.text) {
+      input.value = msg.text;
+    }
+    return;
+  }
+  // 音声認識エラー
+  if (msg.type === 'voiceError') {
+    voiceShowError(msg.message);
+    return;
+  }
   // プレミアム情報
   if (msg.type === 'premiumStatus') {
     isPremiumUser = msg.isPremium;
