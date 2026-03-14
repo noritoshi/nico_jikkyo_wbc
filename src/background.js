@@ -1,6 +1,6 @@
 // background.js — Service Worker: ニコニコAPIへの接続管理とコメント転送
 
-const DEBUG = true; // デバッグログの有効/無効（リリース時はfalseに戻す）
+const DEBUG = false; // デバッグログの有効/無効（リリース時はfalseに戻す）
 function debugLog(...args) { if (DEBUG) console.log(...args); }
 
 let currentStatus = 'disconnected';

@@ -1,6 +1,6 @@
 // offscreen.js — WebSocket接続 + mpn protobufコメント取得
 
-const DEBUG = true; // デバッグログの有効/無効（リリース時はfalseに戻す）
+const DEBUG = false; // デバッグログの有効/無効（リリース時はfalseに戻す）
 function log(...args) {
   if (!DEBUG) return;
   const msg = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');

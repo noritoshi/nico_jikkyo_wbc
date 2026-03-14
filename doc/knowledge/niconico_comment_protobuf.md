@@ -370,6 +370,15 @@ vposの基準時刻（ISO 8601形式）。
 - git履歴のメール書き換え: `git filter-branch --env-filter`
 - プロジェクトローカルのgit設定: `git config user.email` (--globalなし)
 
+## Chrome拡張 content_script の WebSocket 制約
+
+- content_script からの `fetch` / `XMLHttpRequest` は拡張の `host_permissions` に従い、ページのCSPに制約されない
+- しかし `WebSocket` (wss://) は **ページのCSP (connect-src) に制約される**
+- Netflix上の content_script から `wss://api.deepgram.com` への WebSocket 接続は 1006 (Abnormal Closure) で即座に失敗する
+- offscreen document、background service worker からも同様に失敗（原因は異なる可能性あり）
+- **回避策**: WebSocket の代わりに REST API (`fetch` POST) を使用する（`host_permissions` で許可済みなら動作する）
+- Deepgram の場合: ストリーミング WebSocket API → REST API バッチ送信方式に変更して解決
+
 ## 参考リソース
 
 - [nicolive-comment-protobuf (公式Protobufスキーマ)](https://github.com/n-air-app/nicolive-comment-protobuf)
