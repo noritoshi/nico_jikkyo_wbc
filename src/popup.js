@@ -110,27 +110,39 @@ const BASE_KEYTERMS = new Set([
   'WBC', '侍ジャパン',
 ]);
 
-function renderKeyterms(keyterms) {
-  if (!keyterms || keyterms.length === 0) {
+function renderKeyterms(keyterms, customKeyterms) {
+  if ((!keyterms || keyterms.length === 0) && (!customKeyterms || customKeyterms.length === 0)) {
     keytermList.innerHTML = '';
     btnClear.style.display = 'none';
     return;
   }
   btnClear.style.display = '';
-  keytermList.innerHTML = keyterms.map(kt => {
-    const cls = BASE_KEYTERMS.has(kt) ? 'keyterm-tag base' : 'keyterm-tag';
-    return `<span class="${cls}">${kt}</span>`;
+  const customSet = new Set(customKeyterms || []);
+  const all = keyterms || [];
+  keytermList.innerHTML = all.map(kt => {
+    const isCustom = customSet.has(kt);
+    const cls = isCustom ? 'keyterm-tag custom' : BASE_KEYTERMS.has(kt) ? 'keyterm-tag base' : 'keyterm-tag';
+    const removeBtn = isCustom ? `<span class="keyterm-remove" data-kt="${kt}">×</span>` : '';
+    return `<span class="${cls}">${kt}${removeBtn}</span>`;
   }).join('');
+  // 個別削除ハンドラ
+  keytermList.querySelectorAll('.keyterm-remove').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const kt = el.dataset.kt;
+      removeCustomKeyterm(kt);
+    });
+  });
 }
 
 // 前回の入力を復元
-chrome.storage.local.get(['voiceTeamA', 'voiceTeamB', 'voiceKeyterms'], (result) => {
+chrome.storage.local.get(['voiceTeamA', 'voiceTeamB', 'voiceKeyterms', 'voiceCustomKeyterms'], (result) => {
   if (result.voiceTeamA) teamAInput.value = result.voiceTeamA;
   if (result.voiceTeamB) teamBInput.value = result.voiceTeamB;
   if (result.voiceKeyterms && result.voiceKeyterms.length > 0) {
     keytermStatus.textContent = `${result.voiceKeyterms.length}件のキーワード設定済み`;
     keytermStatus.style.color = '#00ff66';
-    renderKeyterms(result.voiceKeyterms);
+    renderKeyterms(result.voiceKeyterms, result.voiceCustomKeyterms);
   }
 });
 
@@ -162,16 +174,76 @@ btnFetch.addEventListener('click', () => {
     } else if (res && res.keyterms) {
       keytermStatus.textContent = `${res.keyterms.length}件のキーワードを設定しました`;
       keytermStatus.style.color = '#00ff66';
-      renderKeyterms(res.keyterms);
+      chrome.storage.local.get(['voiceCustomKeyterms'], (r) => {
+        renderKeyterms(res.keyterms, r.voiceCustomKeyterms);
+      });
     }
   });
 });
 
 btnClear.addEventListener('click', () => {
-  chrome.storage.local.remove(['voiceKeyterms']);
+  chrome.storage.local.remove(['voiceKeyterms', 'voiceCustomKeyterms']);
   keytermList.innerHTML = '';
   btnClear.style.display = 'none';
   keytermStatus.textContent = 'キーワードをクリアしました';
   keytermStatus.style.color = '#64748B';
   setTimeout(() => { keytermStatus.textContent = ''; }, 2000);
+});
+
+// カスタムキーワード追加
+const customKeytermInput = document.getElementById('custom-keyterm');
+const btnAddKeyterm = document.getElementById('btn-add-keyterm');
+
+function addCustomKeyterm(word) {
+  word = word.trim();
+  if (!word) return;
+  chrome.storage.local.get(['voiceKeyterms', 'voiceCustomKeyterms'], (result) => {
+    const keyterms = result.voiceKeyterms || [];
+    const custom = result.voiceCustomKeyterms || [];
+    if (keyterms.includes(word)) {
+      keytermStatus.textContent = `「${word}」は既に登録済みです`;
+      keytermStatus.style.color = '#FFCC00';
+      setTimeout(() => updateKeytermStatusCount(keyterms.length), 2000);
+      return;
+    }
+    custom.push(word);
+    keyterms.push(word);
+    chrome.storage.local.set({ voiceKeyterms: keyterms, voiceCustomKeyterms: custom }, () => {
+      renderKeyterms(keyterms, custom);
+      keytermStatus.textContent = `「${word}」を追加（計${keyterms.length}件）`;
+      keytermStatus.style.color = '#00ff66';
+    });
+  });
+}
+
+function removeCustomKeyterm(word) {
+  chrome.storage.local.get(['voiceKeyterms', 'voiceCustomKeyterms'], (result) => {
+    const keyterms = (result.voiceKeyterms || []).filter(k => k !== word);
+    const custom = (result.voiceCustomKeyterms || []).filter(k => k !== word);
+    chrome.storage.local.set({ voiceKeyterms: keyterms, voiceCustomKeyterms: custom }, () => {
+      renderKeyterms(keyterms, custom);
+      updateKeytermStatusCount(keyterms.length);
+    });
+  });
+}
+
+function updateKeytermStatusCount(count) {
+  if (count > 0) {
+    keytermStatus.textContent = `${count}件のキーワード設定済み`;
+    keytermStatus.style.color = '#00ff66';
+  } else {
+    keytermStatus.textContent = '';
+  }
+}
+
+btnAddKeyterm.addEventListener('click', () => {
+  addCustomKeyterm(customKeytermInput.value);
+  customKeytermInput.value = '';
+});
+
+customKeytermInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    addCustomKeyterm(customKeytermInput.value);
+    customKeytermInput.value = '';
+  }
 });

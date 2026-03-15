@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Niko Jikkyo",
-  "version": "0.19.0",
+  "version": "0.20.0",
   "description": "2026 WBC Netflix配信をニコニコ実況コメントと一緒に楽しむためのChrome拡張。ニコニコ生放送のコメントをNetflix映像の上にニコニコ風に流します。",
   "permissions": [
     "offscreen",

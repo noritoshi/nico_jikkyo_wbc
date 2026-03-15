@@ -160,12 +160,14 @@
       text-align: center;
     }
     #btn-save-dg-key,
-    #btn-fetch-keyterms {
+    #btn-fetch-keyterms,
+    #btn-add-keyterm {
       background: #1E293B;
       color: #fff;
     }
     #btn-save-dg-key:hover,
-    #btn-fetch-keyterms:hover {
+    #btn-fetch-keyterms:hover,
+    #btn-add-keyterm:hover {
       background: #2a3a52;
     }
     #btn-fetch-keyterms:disabled {
@@ -207,6 +209,18 @@
     }
     .keyterm-tag.base {
       color: #64748B;
+    }
+    .keyterm-tag.custom {
+      color: #22D3EE;
+    }
+    .keyterm-tag .keyterm-remove {
+      cursor: pointer;
+      margin-left: 4px;
+      opacity: 0.5;
+    }
+    .keyterm-tag .keyterm-remove:hover {
+      opacity: 1;
+      color: #E94560;
     }
   </style>
 </head>
@@ -276,6 +290,12 @@
     <button id="btn-clear-keyterms" style="display:none;">クリア</button>
   </div>
   <div id="keyterm-status"></div>
+  <div class="field" style="margin-top: 8px;">
+    <div style="display: flex; gap: 6px;">
+      <input type="text" id="custom-keyterm" placeholder="キーワードを追加（例: ピッチャー）">
+      <button id="btn-add-keyterm" style="flex:0 0 auto; padding:10px 14px;">追加</button>
+    </div>
+  </div>
   <div id="keyterm-list"></div>
 
   <script src="popup.js"></script>

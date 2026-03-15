@@ -262,7 +262,7 @@ async function fetchVoiceKeyterms(teamA, teamB) {
   const prompt = `${today}時点のWBC (World Baseball Classic) 2026の情報を検索してください。
 
 「${teamA}」と「${teamB}」の対戦について:
-- 両チームの出場登録選手のうち、主要選手（スタメン・主力投手）を中心に最大40名をリストアップ
+- 両チームの出場登録選手のうち、主要選手（スタメン・主力投手）を中心に最大30名をリストアップ
 - 監督は含める。コーチは不要
 - 日本人選手は「姓 名」（漢字）で出力（例: 大谷翔平）
 - 外国人選手は「姓 名」（カタカナ）で出力（例: マイク・トラウト）
@@ -301,7 +301,7 @@ async function fetchVoiceKeyterms(teamA, teamB) {
     }
 
     const parsed = JSON.parse(jsonMatch[1].trim());
-    const keyterms = parsed.keyterms || [];
+    const keyterms = (parsed.keyterms || []).slice(0, 30);
     if (keyterms.length === 0) {
       return { error: '選手情報が見つかりませんでした' };
     }
@@ -363,11 +363,11 @@ async function startDeepgram() {
 
   const params = new URLSearchParams({
     language: 'ja', model: 'nova-3',
-    punctuate: 'true', smart_format: 'true', endpointing: '800',
+    punctuate: 'true', smart_format: 'true', endpointing: '300',
     interim_results: 'true', encoding: 'linear16', sample_rate: '16000', channels: '1',
   });
-  // 保存済みキーワード（選手名等）をkeytermとして追加（URL長制限のため最大60件）
-  const keyterms = (stored.voiceKeyterms || []).slice(0, 60);
+  // 保存済みキーワード（選手名等）をkeytermとして追加（URL長制限のため最大80件）
+  const keyterms = (stored.voiceKeyterms || []).slice(0, 80);
   for (const kt of keyterms) {
     params.append('keyterm', kt);
   }
@@ -388,9 +388,14 @@ async function startDeepgram() {
     broadcastToContent({ type: 'voiceStatus', status: 'connected' });
   };
 
+  let dgMsgCount = 0;
   deepgramWs.onmessage = (event) => {
     try {
       const result = JSON.parse(event.data);
+      dgMsgCount++;
+      if (dgMsgCount <= 5 || dgMsgCount % 20 === 0) {
+        debugLog('[bg-voice] msg#' + dgMsgCount, 'type=' + result.type, 'is_final=' + result.is_final, 'speech_final=' + result.speech_final, 'transcript=' + (result.channel?.alternatives?.[0]?.transcript || '').substring(0, 30));
+      }
       if (result.type !== 'Results') return;
       const alt = result.channel?.alternatives?.[0];
       if (!alt) return;
@@ -882,14 +887,30 @@ chrome.runtime.onConnect.addListener((port) => {
       if (contentPorts.size === 0) stopDeepgram();
     });
     // content_scriptからのport メッセージ（音声データなど）
+    let voiceAudioCount = 0;
     port.onMessage.addListener((msg) => {
       if (msg.type === 'voiceStart') {
+        voiceAudioCount = 0;
+        debugLog('[bg-voice] Received voiceStart from content_script');
         startDeepgram();
       } else if (msg.type === 'voiceAudio') {
+        voiceAudioCount++;
+        if (voiceAudioCount <= 3 || voiceAudioCount % 50 === 0) {
+          // 音声レベルを確認（最大絶対値）
+          let maxAbs = 0;
+          if (msg.data) {
+            for (let i = 0; i < Math.min(msg.data.length, 200); i++) {
+              const v = Math.abs(msg.data[i]);
+              if (v > maxAbs) maxAbs = v;
+            }
+          }
+          debugLog('[bg-voice] voiceAudio #' + voiceAudioCount, 'len=' + (msg.data ? msg.data.length : 0), 'wsState=' + (deepgramWs ? deepgramWs.readyState : 'null'), 'maxAbs=' + maxAbs);
+        }
         if (deepgramWs && deepgramWs.readyState === WebSocket.OPEN && msg.data) {
           deepgramWs.send(new Int16Array(msg.data).buffer);
         }
       } else if (msg.type === 'voiceStop') {
+        debugLog('[bg-voice] Received voiceStop, audioChunks sent:', voiceAudioCount);
         stopDeepgram();
       }
     });
