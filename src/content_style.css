@@ -200,6 +200,30 @@
   color: #f87171;
 }
 
+#niko-jikkyo-input.voice-reject {
+  text-decoration: line-through;
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.15);
+  border-color: rgba(248, 113, 113, 0.5);
+  animation: voice-reject-fade 1.5s ease-out;
+}
+
+@keyframes voice-reject-fade {
+  0% { opacity: 1; }
+  70% { opacity: 1; }
+  100% { opacity: 0.3; }
+}
+
+#niko-jikkyo-input.voice-validating {
+  border-color: rgba(255, 204, 0, 0.6);
+  animation: voice-validating-pulse 0.8s ease-in-out infinite;
+}
+
+@keyframes voice-validating-pulse {
+  0%, 100% { border-color: rgba(255, 204, 0, 0.3); }
+  50% { border-color: rgba(255, 204, 0, 0.7); }
+}
+
 #niko-jikkyo-input:focus {
   border-color: #E94560;
   box-shadow: 0 0 12px rgba(233, 69, 96, 0.3);

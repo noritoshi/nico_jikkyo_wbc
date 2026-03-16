@@ -454,6 +454,88 @@ function stopDeepgram() {
   }
 }
 
+// 音声認識結果のAI検証
+async function validateVoiceTranscript(data) {
+  const t0 = Date.now();
+  const result = await chrome.storage.local.get(['geminiApiKey']);
+  const apiKey = result.geminiApiKey;
+  if (!apiKey) {
+    debugLog('[bg-voice-validate] API Key未設定、検証スキップ');
+    return { action: 'OK' };
+  }
+
+  const prompt = `音声認識結果を校正する。ニコニコ生放送の実況コメント。
+
+【文脈（参考のみ。修正判断の補助に使え。文脈の内容を出力に混ぜるな）】
+${data.recentComments || '（なし）'}
+
+【入力】
+${data.transcript}
+
+【FIXしてよい修正】
+- 同音異義語の漢字修正（買った→勝った、早い→速い 等）
+- 選手名・人名の音の聞き間違い修正（あじゃあど→マチャド 等）
+- 数字の読みやすい表記変換（百六十三→163 等）
+- 発話先頭が切れた場合の最小限の補完（ちゃったか→やっちゃったか 等）
+- 助詞の聞き間違い修正（スミスマー→スミスまた 等）
+
+【禁止（これらは全てOKを返せ）】
+- 入力の意味を変える修正は全て禁止
+- 文脈のコメントに含まれる単語や人名を入力に混ぜ込むな（文脈に「ヤスアキ」があっても「行け」を「ヤスアキ」に変えるな）
+- 入力と音が全く異なる単語への変換は禁止（めっちゃ祈ってる子は→めっちゃプホさん祈ってる のような変換は禁止）
+- 句読点を挿入して語の区切りを変えるな
+- 確信がなければOK
+
+【OK（そのまま通す）】
+- 叫び声・感嘆（おおお、うわー、やばい、きつ、うて、やば 等）
+- 口語表現・くだけた表現は全てOK
+- 短いコメントもOK（実況では普通）
+
+【REJECT】完全に意味不明なノイズのみ（せふぃ、ぐむ 等）
+
+【出力】1行のみ: OK / FIX:修正後テキスト / REJECT:理由`;
+
+  try {
+    const model = 'gemini-3.1-flash-lite-preview';
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    const res = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: 64, temperature: 0.1 },
+      }),
+    });
+
+    const aiMs = Date.now() - t0;
+
+    if (!res.ok) {
+      debugLog(`[bg-voice-validate] API error ${res.status} [${aiMs}ms]`);
+      return { action: 'OK', aiMs };
+    }
+
+    const json = await res.json();
+    const parts = json.candidates?.[0]?.content?.parts || [];
+    const output = parts.map(p => p.text).join('').trim();
+
+    debugLog(`[bg-voice-validate] "${data.transcript}" → "${output}" [${aiMs}ms]`);
+
+    if (output.startsWith('FIX:')) {
+      const fixed = output.substring(4).trim();
+      return { action: 'FIX', text: fixed, aiMs };
+    } else if (output.startsWith('REJECT:')) {
+      const reason = output.substring(7).trim();
+      return { action: 'REJECT', reason, aiMs };
+    } else {
+      return { action: 'OK', aiMs };
+    }
+  } catch (e) {
+    const aiMs = Date.now() - t0;
+    debugLog(`[bg-voice-validate] Error: ${e.message} [${aiMs}ms]`);
+    return { action: 'OK', aiMs };
+  }
+}
+
 // Gemini API呼び出し
 let geminiAbortController = null;
 
@@ -912,6 +994,12 @@ chrome.runtime.onConnect.addListener((port) => {
       } else if (msg.type === 'voiceStop') {
         debugLog('[bg-voice] Received voiceStop, audioChunks sent:', voiceAudioCount);
         stopDeepgram();
+      } else if (msg.type === 'validateVoiceTranscript') {
+        // AI検証リクエスト（port経由で受信→port経由で返信）
+        const reqId = msg.reqId;
+        validateVoiceTranscript(msg.data).then((result) => {
+          port.postMessage({ type: 'voiceValidateResult', reqId, result });
+        });
       }
     });
   }

@@ -53,6 +53,89 @@ function vProcessTranscript(transcript, words) {
   return r.slice(0, V_MAX_LEN).replace(/[。、，．]/g, '').replace(/！/g, '!').replace(/？/g, '?').trim();
 }
 
+// --- Voice: 同音異義語ローカル辞書 ---
+// context: 認識テキスト+直近コメントに含まれていれば置換を適用
+const HOMOPHONE_RULES = [
+  // 早い↔速い（スポーツ文脈）
+  { from: '早い', to: '速い', context: /球|ボール|ストレート|足|スイング|振り|投|打|走|ピッチ|スピード/ },
+  { from: '早すぎ', to: '速すぎ', context: /球|ボール|ストレート|足|スイング|振り|投|打|走|ピッチ|スピード/ },
+  { from: '早かった', to: '速かった', context: /球|ボール|ストレート|足|スイング|振り|投|打|走|ピッチ|スピード/ },
+  // 取る→捕る（捕球文脈）
+  { from: '取った', to: '捕った', context: /キャッチ|フライ|ゴロ|ファインプレー|捕球|グラブ|ダイビング/ },
+  { from: '取れ', to: '捕れ', context: /キャッチ|フライ|ゴロ|ファインプレー|捕球|グラブ|ダイビング/ },
+  // 暑い→熱い（試合文脈）
+  { from: '暑い', to: '熱い', context: /試合|戦い|展開|声援|応援|バトル|勝負|男|闘|魂/ },
+  // 打つの誤変換防止
+  { from: '討つ', to: '打つ', context: /ヒット|ホームラン|バット|打席|打者|安打|長打|単打/ },
+  { from: '撃つ', to: '打つ', context: /ヒット|ホームラン|バット|打席|打者|安打|長打|単打/ },
+  // 投げる誤変換
+  { from: '逃げる', to: '投げる', context: /ピッチャー|投手|マウンド|球|ストレート|変化球|投球/ },
+  // 振る誤変換
+  { from: '降る', to: '振る', context: /バット|スイング|三振|空振|振り/ },
+  // 勝つ誤変換
+  { from: '克つ', to: '勝つ', context: /試合|チーム|日本|勝利|勝負/ },
+];
+
+function vApplyHomophones(text) {
+  const contextStr = text + '\n' + recentRendered.slice(-20).map(c => c.text).join('\n');
+  let result = text;
+  const applied = [];
+  for (const rule of HOMOPHONE_RULES) {
+    if (!result.includes(rule.from)) continue;
+    if (rule.context && !rule.context.test(contextStr)) continue;
+    result = result.replace(new RegExp(rule.from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), rule.to);
+    applied.push(`${rule.from}→${rule.to}`);
+  }
+  if (applied.length > 0) {
+    console.log('[niko-voice] 同音異義語修正:', applied.join(', '), `("${text}" → "${result}")`);
+  }
+  return result;
+}
+
+// --- Voice: ローカル品質チェック ---
+// 明らかなゴミ入力を即時却下（実況で使われる短い表現は許可）
+// 2文字でも意味のある実況ワード（やば、きつ、うて、すげ、etc.）は通す
+const V_VALID_SHORT_WORDS = /^(やば|きつ|うて|すげ|まじ|くさ|わろ|えぐ|つよ|よわ|おお|ええ|うわ|あー|おー|えー|うー|いけ|こい|よし|おし|あつ|うそ|はや|おせ|うま|へた|かて|まけ)$/;
+
+function vLocalQualityCheck(text, words) {
+  // 空テキスト
+  if (!text || text.length === 0) return { ok: false, reason: '空テキスト' };
+
+  // 1文字は基本却下（「！」「？」は許可）
+  if (text.length === 1 && !/[！!？?]/.test(text)) return { ok: false, reason: `1文字（"${text}"）` };
+
+  // 2文字ひらがな/カタカナ: 既知の実況ワードは許可、それ以外はAI検証に回す
+  if (text.length === 2 && /^[ぁ-んァ-ヶー]{2}$/.test(text) && !V_VALID_SHORT_WORDS.test(text)) {
+    // 却下ではなくAI検証に回す（confidence無視）
+    return { ok: true, confidence: 0, skipAi: false };
+  }
+
+  // Deepgram confidence チェック（平均）
+  if (words && words.length > 0) {
+    const avgConf = words.reduce((sum, w) => sum + (w.confidence || 0), 0) / words.length;
+    if (avgConf < 0.4) return { ok: false, reason: `低confidence（avg=${avgConf.toFixed(2)}）` };
+    // skipAi無効化: 同音異義語の見逃しが多いため常にAI検証を通す
+    return { ok: true, confidence: avgConf, skipAi: false };
+  }
+
+  return { ok: true, confidence: null, skipAi: false };
+}
+
+// --- Voice: AI検証のpending管理 ---
+const pendingVoiceValidations = new Map(); // reqId → { processed, t0, input }
+
+// --- Voice: 却下表示UI ---
+function voiceShowReject(text, reason) {
+  const input = document.getElementById('niko-jikkyo-input');
+  if (!input) return;
+  input.value = text;
+  input.classList.add('voice-reject');
+  setTimeout(() => {
+    input.classList.remove('voice-reject');
+    if (voiceActive) input.value = '';
+  }, 1500);
+}
+
 function voiceShowError(msg) {
   voiceActive = false;
   stopVoiceAudio();
@@ -72,10 +155,48 @@ function voiceShowError(msg) {
 
 // 音声認識結果の処理（backgroundから受信）
 function handleVoiceResult(transcript, words) {
+  const t0 = performance.now();
   let processed = vProcessTranscript(transcript, words);
   if (!processed) return;
 
-  console.log('[niko-voice] Transcript:', processed);
+  // Phase 0: 同音異義語ローカル辞書
+  const beforeHomophone = processed;
+  processed = vApplyHomophones(processed);
+  const homophoneMs = (performance.now() - t0).toFixed(1);
+
+  // Phase 1: ローカル品質チェック
+  const qualityResult = vLocalQualityCheck(processed, words);
+  const localMs = (performance.now() - t0).toFixed(1);
+
+  if (!qualityResult.ok) {
+    console.log(`[niko-voice] ❌ 却下（ローカル）: "${processed}" reason=${qualityResult.reason} [${localMs}ms]`);
+    voiceShowReject(processed, qualityResult.reason);
+    return;
+  }
+
+  console.log(`[niko-voice] ✅ ローカルチェック通過: "${processed}" confidence=${qualityResult.confidence?.toFixed(2) || 'N/A'} skipAi=${qualityResult.skipAi} [${localMs}ms]`);
+
+  // Phase 2: AI検証（confidence中程度の場合、自動投稿モード時のみ）
+  if (voiceAutoPost && !qualityResult.skipAi) {
+    const input = document.getElementById('niko-jikkyo-input');
+    if (input) { input.value = processed; input.classList.add('voice-validating'); }
+
+    const recentTexts = recentRendered.slice(-15).map(c => c.text).join('\n');
+    const reqId = 'vv-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+    // port経由でbackgroundに送信（sendMessageはoffscreenと競合するため）
+    port.postMessage({
+      type: 'validateVoiceTranscript',
+      reqId,
+      data: { transcript: processed, recentComments: recentTexts }
+    });
+    // レスポンスはport.onMessageで受信（pendingに登録）
+    pendingVoiceValidations.set(reqId, { processed, t0, input });
+    return;
+  }
+
+  // AI検証スキップ: そのまま投稿/表示
+  const totalMs = (performance.now() - t0).toFixed(1);
+  console.log(`[niko-voice] 📤 投稿（AIスキップ）: "${processed}" [${totalMs}ms]`);
   const input = document.getElementById('niko-jikkyo-input');
   if (voiceAutoPost) {
     postUserComment(processed);
@@ -844,6 +965,39 @@ chrome.storage.local.get(['isPremium'], (result) => {
 // backgroundからのコメント受信（port接続方式）
 const port = chrome.runtime.connect({ name: 'niko-jikkyo' });
 port.onMessage.addListener((msg) => {
+  // 音声AI検証の結果
+  if (msg.type === 'voiceValidateResult') {
+    const pending = pendingVoiceValidations.get(msg.reqId);
+    if (!pending) return;
+    pendingVoiceValidations.delete(msg.reqId);
+    const { processed, t0, input } = pending;
+    const response = msg.result;
+    const totalMs = (performance.now() - t0).toFixed(1);
+    if (input) input.classList.remove('voice-validating');
+
+    if (!response) {
+      console.log(`[niko-voice] ⚠️ AI検証失敗、そのまま投稿: "${processed}" [${totalMs}ms]`);
+      postUserComment(processed);
+      if (input) input.value = '';
+      return;
+    }
+
+    if (response.action === 'REJECT') {
+      console.log(`[niko-voice] ❌ 却下（AI）: "${processed}" reason="${response.reason || ''}" [${totalMs}ms, AI=${response.aiMs || '?'}ms]`);
+      voiceShowReject(processed, response.reason);
+      return;
+    }
+
+    const finalText = response.action === 'FIX' ? response.text : processed;
+    if (response.action === 'FIX') {
+      console.log(`[niko-voice] 🔧 AI修正: "${processed}" → "${finalText}" [${totalMs}ms, AI=${response.aiMs || '?'}ms]`);
+    } else {
+      console.log(`[niko-voice] ✅ AI承認: "${finalText}" [${totalMs}ms, AI=${response.aiMs || '?'}ms]`);
+    }
+    postUserComment(finalText);
+    if (input) input.value = '';
+    return;
+  }
   // 音声認識結果
   if (msg.type === 'voiceTranscript') {
     handleVoiceResult(msg.transcript, msg.words || []);
